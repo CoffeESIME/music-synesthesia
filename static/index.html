@@ -190,7 +190,8 @@
         }
 
         .transport-button:focus-visible,
-        .profile-option input:focus-visible + span {
+        .profile-option input:focus-visible + span,
+        .audio-file-input:focus-visible + .file-trigger {
             outline: 3px solid var(--accent);
             outline-offset: 3px;
         }
@@ -258,6 +259,82 @@
         .profile-option input:disabled + span {
             cursor: not-allowed;
             opacity: 0.5;
+        }
+
+        .track-mode {
+            display: grid;
+            gap: 0.75rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .track-heading {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .track-state {
+            color: var(--ink-soft);
+            font-size: 0.75rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .audio-file-input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+        }
+
+        .file-trigger {
+            display: flex;
+            min-height: 3rem;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.75rem;
+            border: 1px solid var(--ink);
+            cursor: pointer;
+            transition: background-color 150ms var(--ease-toggle), color 150ms var(--ease-toggle), transform 100ms var(--ease-out);
+        }
+
+        .file-trigger::after {
+            content: "+";
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+
+        .audio-file-input:disabled + .file-trigger {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .track-player {
+            display: grid;
+            gap: 0.5rem;
+            padding-top: 0.25rem;
+        }
+
+        .track-player[hidden] {
+            display: none;
+        }
+
+        .track-player audio {
+            width: 100%;
+            min-height: 3rem;
+            accent-color: var(--accent);
+        }
+
+        .track-name {
+            overflow: hidden;
+            margin: 0;
+            color: var(--ink-soft);
+            font-size: 0.75rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .panel-footer {
@@ -411,6 +488,11 @@
             }
 
             .profile-option:hover span { border-color: var(--ink); }
+
+            .file-trigger:hover {
+                background: var(--ink);
+                color: var(--paper);
+            }
         }
 
         @media (min-width: 50rem) {
@@ -434,7 +516,8 @@
 
         @media (pointer: coarse) {
             .transport-button,
-            .profile-option span { min-height: 3rem; }
+            .profile-option span,
+            .file-trigger { min-height: 3rem; }
         }
 
         @media (prefers-reduced-motion: reduce) {
@@ -456,7 +539,7 @@
             <header class="masthead">
                 <p class="eyebrow">Audio · color · luz</p>
                 <h1 id="page-title">Proyecto Sinestesia</h1>
-                <p class="intro">Haz sonar una nota. La pantalla y tus luces Hue compartirán el mismo color.</p>
+                <p class="intro">Haz sonar una nota o carga una pista. La pantalla y tus luces Hue compartirán el mismo color.</p>
             </header>
 
             <div class="controls">
@@ -481,6 +564,24 @@
                         </label>
                     </div>
                 </fieldset>
+
+                <section class="track-mode" aria-labelledby="track-title">
+                    <div class="track-heading">
+                        <p class="section-label" id="track-title">Modo pista</p>
+                        <span class="track-state" id="track-state">Sin pista</span>
+                    </div>
+                    <input
+                        class="audio-file-input"
+                        id="audio-file-input"
+                        type="file"
+                        accept=".wav,.mp3,audio/wav,audio/mpeg"
+                    >
+                    <label class="file-trigger" for="audio-file-input">Elegir WAV o MP3</label>
+                    <div class="track-player" id="track-player" hidden>
+                        <audio id="player" controls preload="metadata"></audio>
+                        <p class="track-name" id="track-name"></p>
+                    </div>
+                </section>
             </div>
 
             <footer class="panel-footer">

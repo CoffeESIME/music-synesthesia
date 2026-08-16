@@ -34,11 +34,16 @@ ENV APP_PORT=8765 \
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
+        ffmpeg \
         libportaudio2 \
         libsndfile1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 sinestesia \
-    && useradd --uid 10001 --gid sinestesia --groups audio --create-home --shell /usr/sbin/nologin sinestesia
+    && useradd --uid 10001 --gid sinestesia --groups audio --create-home --shell /usr/sbin/nologin sinestesia \
+    && mkdir --parents /app/temp \
+    && chown sinestesia:sinestesia /app/temp
+
+ENV NUMBA_CACHE_DIR=/tmp/numba-cache
 
 WORKDIR /app
 

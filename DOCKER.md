@@ -2,7 +2,7 @@
 
 La imagen usa Python 3.11 sobre Debian Bookworm. PortAudio, libsndfile y la
 compilacion de aubio quedan resueltos dentro de Linux, sin depender del Python
-instalado en Windows.
+instalado en Windows. FFmpeg queda disponible para analizar pistas MP3.
 
 ## Arranque habitual
 
@@ -64,6 +64,10 @@ falta exponer audio al contenedor o añadir captura desde el navegador.
 - `.env` está excluido de la imagen para proteger la clave de aplicación Hue.
 - El proceso se ejecuta como usuario sin privilegios, con filesystem de solo
   lectura y todas las capabilities eliminadas.
+- Las pistas cargadas se guardan en un `tmpfs` de 512 MB y desaparecen al
+  recrear el contenedor.
+- La cache de Numba/librosa usa el `tmpfs` de `/tmp`, por lo que funciona con
+  el filesystem de la imagen en modo de solo lectura.
 
 Si tu instalacion incluye el plugin moderno, puedes sustituir
 `docker-compose` por `docker compose` en todos los comandos.

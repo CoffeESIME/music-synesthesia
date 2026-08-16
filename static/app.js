@@ -13,6 +13,11 @@ const colorHex = document.querySelector("#color-hex");
 const noteDisplay = document.querySelector("#note-display");
 const noteCaption = document.querySelector("#note-caption");
 const activeProfileLabel = document.querySelector("#active-profile-label");
+const audioFileInput = document.querySelector("#audio-file-input");
+const trackPlayer = document.querySelector("#track-player");
+const player = document.querySelector("#player");
+const trackName = document.querySelector("#track-name");
+const trackState = document.querySelector("#track-state");
 const scaleNotes = [...document.querySelectorAll(".scale-note")];
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -22,6 +27,11 @@ let reconnectTimer = null;
 let reconnectAttempt = 0;
 let allowReconnect = true;
 let controlsBusy = false;
+let engineIsRunning = false;
+let lightingMap = [];
+let activeTrackCueIndex = -1;
+let pendingTrackCue = null;
+let sendingTrackCue = false;
 
 const requiredElements = [
     startButton,
@@ -36,6 +46,11 @@ const requiredElements = [
     noteDisplay,
     noteCaption,
     activeProfileLabel,
+    audioFileInput,
+    trackPlayer,
+    player,
+    trackName,
+    trackState,
 ];
 
 if (requiredElements.some((element) => element === null)) {
@@ -52,6 +67,7 @@ function setBusy(isBusy) {
     profileInputs.forEach((input) => {
         input.disabled = isBusy;
     });
+    audioFileInput.disabled = isBusy;
 }
 
 function capitalize(value) {
@@ -60,6 +76,7 @@ function capitalize(value) {
 
 function applyEngineStatus(status) {
     const running = Boolean(status.running);
+    engineIsRunning = running;
     startButton.disabled = running || controlsBusy;
     stopButton.disabled = !running || controlsBusy;
     listenerStatus.textContent = running ? "Escuchando" : "En espera";
@@ -108,6 +125,8 @@ async function refreshStatus({ quiet = false } = {}) {
 }
 
 async function startListening() {
+    player.pause();
+    trackState.textContent = lightingMap.length > 0 ? "Pista en pausa" : "Sin pista";
     setBusy(true);
     startButton.disabled = true;
     stopButton.disabled = true;
@@ -162,7 +181,14 @@ async function changeProfile(input) {
             method: "POST",
         });
         activeProfileLabel.textContent = capitalize(response.profile);
-        setFeedback(`Perfil ${capitalize(response.profile)} activo.`);
+        if (lightingMap.length > 0) {
+            clearTrack();
+            setFeedback(
+                `Perfil ${capitalize(response.profile)} activo. Carga de nuevo la pista para recalcular sus colores.`,
+            );
+        } else {
+            setFeedback(`Perfil ${capitalize(response.profile)} activo.`);
+        }
     } catch (error) {
         profileInputs.forEach((profileInput) => {
             profileInput.checked = profileInput.value === previousProfile;
@@ -173,6 +199,130 @@ async function changeProfile(input) {
         setBusy(false);
         await refreshStatus({ quiet: true });
     }
+}
+
+function clearTrack() {
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    lightingMap = [];
+    activeTrackCueIndex = -1;
+    pendingTrackCue = null;
+    trackName.textContent = "";
+    trackState.textContent = "Sin pista";
+    trackPlayer.hidden = true;
+}
+
+function isSupportedAudioFile(file) {
+    const normalizedName = file.name.toLowerCase();
+    return normalizedName.endsWith(".wav") || normalizedName.endsWith(".mp3");
+}
+
+async function uploadAudioTrack(file) {
+    if (!isSupportedAudioFile(file)) {
+        setFeedback("La pista debe ser un archivo WAV o MP3.", "error");
+        return;
+    }
+
+    player.pause();
+    setBusy(true);
+    trackState.textContent = "Analizando…";
+    setFeedback("Analizando armonía y construyendo el mapa de iluminación…");
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        if (engineIsRunning) {
+            const status = await apiRequest("/api/listener/stop", { method: "POST" });
+            applyEngineStatus(status);
+        }
+        const response = await apiRequest("/upload_audio", {
+            method: "POST",
+            body: formData,
+        });
+        if (!Array.isArray(response.lighting_map) || response.lighting_map.length === 0) {
+            throw new Error("No detectamos notas suficientes en esta pista.");
+        }
+
+        lightingMap = response.lighting_map;
+        activeTrackCueIndex = -1;
+        pendingTrackCue = null;
+        player.src = response.audio_url;
+        player.load();
+        trackName.textContent = file.name;
+        trackState.textContent = `${lightingMap.length} cambios`;
+        trackPlayer.hidden = false;
+        setFeedback("Mapa listo. Reproduce la pista para dirigir las luces.");
+    } catch (error) {
+        clearTrack();
+        setFeedback(`No pudimos preparar la pista. ${error.message}`, "error");
+    } finally {
+        setBusy(false);
+        audioFileInput.value = "";
+        await refreshStatus({ quiet: true });
+    }
+}
+
+function findTrackCueIndex(timeSeconds) {
+    let low = 0;
+    let high = lightingMap.length - 1;
+    let match = -1;
+    while (low <= high) {
+        const middle = Math.floor((low + high) / 2);
+        if (lightingMap[middle].time_sec <= timeSeconds) {
+            match = middle;
+            low = middle + 1;
+        } else {
+            high = middle - 1;
+        }
+    }
+    return match;
+}
+
+function queueTrackCue(cue) {
+    pendingTrackCue = cue;
+    if (!sendingTrackCue) {
+        drainTrackCueQueue();
+    }
+}
+
+async function drainTrackCueQueue() {
+    sendingTrackCue = true;
+    while (pendingTrackCue !== null) {
+        const cue = pendingTrackCue;
+        pendingTrackCue = null;
+        try {
+            await apiRequest("/api/track/color", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    note: cue.note,
+                    color_hex: cue.color_hex,
+                    transition_ms: 100,
+                }),
+            });
+        } catch (error) {
+            player.pause();
+            setFeedback(`La pista se pausó porque Hue no respondió. ${error.message}`, "error");
+            pendingTrackCue = null;
+        }
+    }
+    sendingTrackCue = false;
+}
+
+function syncTrackColor() {
+    if (player.paused || lightingMap.length === 0) {
+        return;
+    }
+    const cueIndex = findTrackCueIndex(player.currentTime);
+    if (cueIndex < 0 || cueIndex === activeTrackCueIndex) {
+        return;
+    }
+
+    activeTrackCueIndex = cueIndex;
+    const cue = lightingMap[cueIndex];
+    showColorEvent(cue.note, cue.color_hex);
+    queueTrackCue(cue);
 }
 
 function isValidHexColor(value) {
@@ -278,6 +428,29 @@ profileInputs.forEach((input) => {
         }
     });
 });
+audioFileInput.addEventListener("change", () => {
+    const [file] = audioFileInput.files;
+    if (file) {
+        uploadAudioTrack(file);
+    }
+});
+player.addEventListener("play", () => {
+    trackState.textContent = "Reproduciendo";
+    syncTrackColor();
+});
+player.addEventListener("pause", () => {
+    if (!player.ended && lightingMap.length > 0) {
+        trackState.textContent = "Pista en pausa";
+    }
+});
+player.addEventListener("ended", () => {
+    trackState.textContent = "Pista terminada";
+    activeTrackCueIndex = -1;
+});
+player.addEventListener("seeking", () => {
+    activeTrackCueIndex = -1;
+});
+player.addEventListener("timeupdate", syncTrackColor);
 
 window.addEventListener("beforeunload", () => {
     allowReconnect = false;

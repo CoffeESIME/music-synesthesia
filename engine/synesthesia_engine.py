@@ -117,6 +117,39 @@ class SynesthesiaEngine:
         with self._state_lock:
             self._profile_name = normalized_profile
 
+    def apply_track_color(
+        self,
+        note: str,
+        rgb: tuple[int, int, int],
+        transition_ms: int = 100,
+    ) -> ColorEvent:
+        """Aplica de forma sincrona un cue de pista mediante el adaptador Hue."""
+        if not note.strip():
+            raise ValueError("note no puede estar vacia")
+        if transition_ms < 0:
+            raise ValueError("transition_ms no puede ser negativo")
+
+        event = ColorEvent(note=note, rgb=rgb)
+        errors: list[str] = []
+        with self._state_lock:
+            self._last_event = event
+
+        for light_id in self._light_ids:
+            try:
+                self._hue_controller.set_color(
+                    light_id,
+                    rgb,
+                    transition_ms=transition_ms,
+                )
+            except Exception as error:
+                errors.append(f"{light_id}: {error}")
+
+        with self._state_lock:
+            self._last_error = "; ".join(errors) if errors else None
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        return event
+
     def start(self) -> bool:
         """Inicia el hilo daemon; devuelve False si ya estaba activo."""
         with self._state_lock:
