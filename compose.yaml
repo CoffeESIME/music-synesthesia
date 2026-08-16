@@ -1,0 +1,24 @@
+name: proyecto-sinestesia
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: proyecto-sinestesia:local
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_PORT: "8765"
+    ports:
+      - "${SINESTESIA_BIND_IP:-127.0.0.1}:${SINESTESIA_HOST_PORT:-18743}:8765"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 5s

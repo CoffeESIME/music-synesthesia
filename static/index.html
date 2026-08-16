@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#eee8dc">
+    <meta name="description" content="Convierte notas musicales en color y luz con Philips Hue.">
+    <title>Proyecto Sinestesia</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --paper: oklch(93% 0.018 82);
+            --paper-deep: oklch(87% 0.025 82);
+            --ink: oklch(21% 0.025 75);
+            --ink-soft: oklch(39% 0.03 75);
+            --accent: oklch(53% 0.17 28);
+            --success: oklch(48% 0.12 150);
+            --danger: oklch(50% 0.18 28);
+            --line: oklch(73% 0.03 78);
+            --detected-color: #d9d2c3;
+            --stage-ink: #080b08;
+            --font-display: "Iowan Old Style", "Palatino Linotype", Baskerville, Georgia, serif;
+            --font-ui: "Avenir Next", Avenir, "Century Gothic", "Segoe UI", sans-serif;
+            --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-toggle: cubic-bezier(0.65, 0, 0.35, 1);
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        html {
+            min-width: 20rem;
+            background: var(--paper);
+        }
+
+        body {
+            min-height: 100svh;
+            margin: 0;
+            background: var(--paper);
+            color: var(--ink);
+            font-family: var(--font-ui);
+            font-size: 1rem;
+            font-kerning: normal;
+            line-height: 1.5;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        button {
+            min-height: 2.75rem;
+        }
+
+        .skip-link {
+            position: fixed;
+            z-index: 20;
+            top: 0.5rem;
+            left: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: var(--ink);
+            color: var(--paper);
+            transform: translateY(-150%);
+            transition: transform 150ms var(--ease-out);
+        }
+
+        .skip-link:focus {
+            transform: translateY(0);
+        }
+
+        .shell {
+            display: grid;
+            min-height: 100svh;
+        }
+
+        .control-panel {
+            display: flex;
+            flex-direction: column;
+            gap: clamp(2rem, 7vw, 4rem);
+            padding: max(1.5rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+            background: var(--paper);
+        }
+
+        .masthead,
+        .controls,
+        .panel-footer {
+            opacity: 0;
+            animation: enter-panel 650ms var(--ease-out) forwards;
+        }
+
+        .masthead { animation-delay: 70ms; }
+        .controls { animation-delay: 140ms; }
+        .panel-footer { animation-delay: 210ms; }
+
+        .eyebrow,
+        .section-label,
+        .stage-kicker,
+        .profile-legend {
+            margin: 0;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            line-height: 1.4;
+            text-transform: uppercase;
+        }
+
+        .eyebrow {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            color: var(--accent);
+        }
+
+        .eyebrow::before {
+            width: 2.5rem;
+            height: 1px;
+            background: currentColor;
+            content: "";
+        }
+
+        h1 {
+            max-width: 8ch;
+            margin: clamp(1rem, 4vw, 2rem) 0 1rem -0.045em;
+            font-family: var(--font-display);
+            font-size: clamp(3rem, 13vw, 6.8rem);
+            font-weight: 400;
+            letter-spacing: -0.065em;
+            line-height: 0.82;
+        }
+
+        .intro {
+            max-width: 31ch;
+            margin: 0;
+            color: var(--ink-soft);
+        }
+
+        .controls {
+            display: grid;
+            gap: 2rem;
+        }
+
+        .transport {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            border-top: 1px solid var(--line);
+            border-bottom: 1px solid var(--line);
+        }
+
+        .transport-button {
+            position: relative;
+            border: 0;
+            background: transparent;
+            color: var(--ink);
+            cursor: pointer;
+            padding: 1rem 0.75rem;
+            text-align: left;
+            transition: background-color 150ms var(--ease-toggle), color 150ms var(--ease-toggle), transform 100ms var(--ease-out);
+        }
+
+        .transport-button + .transport-button {
+            border-left: 1px solid var(--line);
+        }
+
+        .transport-button.primary {
+            background: var(--ink);
+            color: var(--paper);
+        }
+
+        .transport-button::after {
+            float: right;
+            content: "↗";
+        }
+
+        .transport-button.stop::after {
+            content: "■";
+            font-size: 0.72rem;
+        }
+
+        .transport-button:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+
+        .transport-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.42;
+        }
+
+        .transport-button:focus-visible,
+        .profile-option input:focus-visible + span {
+            outline: 3px solid var(--accent);
+            outline-offset: 3px;
+        }
+
+        .profile-picker {
+            min-width: 0;
+            margin: 0;
+            padding: 0;
+            border: 0;
+        }
+
+        .profile-legend {
+            margin-bottom: 0.75rem;
+            color: var(--ink-soft);
+        }
+
+        .profile-options {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.5rem;
+        }
+
+        .profile-option {
+            position: relative;
+            min-width: 0;
+            cursor: pointer;
+        }
+
+        .profile-option input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+        }
+
+        .profile-option span {
+            display: flex;
+            min-height: 2.75rem;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.625rem 0.75rem;
+            border: 1px solid var(--line);
+            color: var(--ink-soft);
+            transition: border-color 150ms var(--ease-toggle), color 150ms var(--ease-toggle), transform 100ms var(--ease-out);
+        }
+
+        .profile-option span::after {
+            width: 0.5rem;
+            height: 0.5rem;
+            border: 1px solid currentColor;
+            border-radius: 50%;
+            content: "";
+        }
+
+        .profile-option input:checked + span {
+            border-color: var(--ink);
+            color: var(--ink);
+        }
+
+        .profile-option input:checked + span::after {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .profile-option input:disabled + span {
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .panel-footer {
+            display: grid;
+            gap: 0.75rem;
+            margin-top: auto;
+        }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--line);
+            font-size: 0.875rem;
+        }
+
+        .status-name { color: var(--ink-soft); }
+
+        .status-value {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 700;
+        }
+
+        .status-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            background: var(--line);
+        }
+
+        .status-dot[data-state="online"],
+        .status-dot[data-state="listening"] { background: var(--success); }
+        .status-dot[data-state="error"] { background: var(--danger); }
+
+        .feedback {
+            min-height: 1.5em;
+            margin: 0;
+            color: var(--ink-soft);
+            font-size: 0.875rem;
+        }
+
+        .feedback[data-tone="error"] { color: var(--danger); }
+
+        .color-stage {
+            position: relative;
+            display: grid;
+            min-height: 52svh;
+            overflow: hidden;
+            grid-template-rows: auto minmax(18rem, 1fr) auto;
+            padding: max(1.25rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) max(1.25rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+            background-color: var(--detected-color);
+            color: var(--stage-ink);
+            transition: background-color 100ms linear, color 100ms linear;
+            isolation: isolate;
+        }
+
+        .color-stage::before,
+        .color-stage::after {
+            position: absolute;
+            z-index: -1;
+            inset: 10% 8%;
+            border: 1px solid currentColor;
+            border-radius: 50%;
+            content: "";
+            opacity: 0.28;
+            transform: rotate(-11deg);
+        }
+
+        .color-stage::after {
+            inset: 18% 17%;
+            opacity: 0.18;
+            transform: rotate(17deg);
+        }
+
+        .stage-header,
+        .stage-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            font-size: 0.75rem;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+        }
+
+        .stage-hex { font-weight: 700; }
+
+        .note-space {
+            display: grid;
+            place-items: center;
+            padding-block: 1.5rem;
+            text-align: center;
+        }
+
+        .note-display {
+            margin: 0;
+            font-family: var(--font-display);
+            font-size: clamp(9rem, 42vw, 30rem);
+            font-weight: 400;
+            letter-spacing: -0.1em;
+            line-height: 0.72;
+            text-indent: -0.08em;
+            text-shadow: 0.018em 0.018em 0 var(--detected-color), 0.024em 0.024em 0 currentColor;
+        }
+
+        .note-caption {
+            margin: clamp(1.5rem, 5vw, 3rem) 0 0;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+        }
+
+        .chromatic-scale {
+            display: flex;
+            min-width: 0;
+            flex: 1;
+            align-items: center;
+            justify-content: flex-end;
+            gap: clamp(0.35rem, 1.4vw, 1.1rem);
+        }
+
+        .scale-note {
+            min-width: 1.25rem;
+            padding-block: 0.25rem;
+            border-bottom: 2px solid transparent;
+            text-align: center;
+            transition: border-color 100ms linear, transform 100ms var(--ease-out);
+        }
+
+        .scale-note[aria-current="true"] {
+            border-color: currentColor;
+            font-weight: 800;
+            transform: translateY(-2px);
+        }
+
+        @keyframes enter-panel {
+            from { opacity: 0; transform: translateY(1rem); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (hover: hover) {
+            .transport-button:hover:not(:disabled) {
+                background: var(--accent);
+                color: var(--paper);
+            }
+
+            .profile-option:hover span { border-color: var(--ink); }
+        }
+
+        @media (min-width: 50rem) {
+            .shell { grid-template-columns: minmax(20rem, 0.72fr) minmax(30rem, 1.6fr); }
+            .control-panel {
+                min-height: 100svh;
+                padding: clamp(2rem, 4vw, 4.5rem);
+            }
+            h1 { font-size: clamp(4rem, 7.2vw, 7.5rem); }
+            .color-stage {
+                min-height: 100svh;
+                padding: clamp(2rem, 3vw, 3.5rem);
+            }
+            .note-display { font-size: clamp(14rem, 31vw, 32rem); }
+        }
+
+        @media (max-width: 31rem) {
+            .chromatic-scale .scale-note:nth-child(even) { display: none; }
+            .stage-footer { align-items: flex-end; }
+        }
+
+        @media (pointer: coarse) {
+            .transport-button,
+            .profile-option span { min-height: 3rem; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                animation-duration: 0.01ms !important;
+                animation-delay: 0ms !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Ir a la señal actual</a>
+    <main class="shell">
+        <section class="control-panel" aria-labelledby="page-title">
+            <header class="masthead">
+                <p class="eyebrow">Audio · color · luz</p>
+                <h1 id="page-title">Proyecto Sinestesia</h1>
+                <p class="intro">Haz sonar una nota. La pantalla y tus luces Hue compartirán el mismo color.</p>
+            </header>
+
+            <div class="controls">
+                <div>
+                    <p class="section-label">Escucha</p>
+                    <div class="transport" aria-label="Controles de escucha">
+                        <button class="transport-button primary" id="start-button" type="button">Iniciar escucha</button>
+                        <button class="transport-button stop" id="stop-button" type="button" disabled>Detener</button>
+                    </div>
+                </div>
+
+                <fieldset class="profile-picker" id="profile-picker">
+                    <legend class="profile-legend">Perfil sinestésico</legend>
+                    <div class="profile-options">
+                        <label class="profile-option">
+                            <input type="radio" name="profile" value="newton">
+                            <span>Newton</span>
+                        </label>
+                        <label class="profile-option">
+                            <input type="radio" name="profile" value="scriabin" checked>
+                            <span>Scriabin</span>
+                        </label>
+                    </div>
+                </fieldset>
+            </div>
+
+            <footer class="panel-footer">
+                <div class="status-row">
+                    <span class="status-name">Micrófono</span>
+                    <span class="status-value"><i class="status-dot" id="listener-dot" aria-hidden="true"></i><span id="listener-status">En espera</span></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-name">Canal en vivo</span>
+                    <span class="status-value"><i class="status-dot" id="socket-dot" aria-hidden="true"></i><span id="socket-status">Conectando</span></span>
+                </div>
+                <p class="feedback" id="feedback" role="status" aria-live="polite">Listo para escuchar.</p>
+            </footer>
+        </section>
+
+        <section class="color-stage" id="main-content" aria-label="Color detectado">
+            <header class="stage-header">
+                <span class="stage-kicker">Señal actual</span>
+                <output class="stage-hex" id="color-hex" aria-label="Color hexadecimal">#D9D2C3</output>
+            </header>
+
+            <div class="note-space" aria-live="polite" aria-atomic="true">
+                <p class="note-display" id="note-display">—</p>
+                <p class="note-caption" id="note-caption">Esperando una nota</p>
+            </div>
+
+            <footer class="stage-footer">
+                <span id="active-profile-label">Scriabin</span>
+                <div class="chromatic-scale" aria-label="Escala cromática">
+                    <span class="scale-note" data-note="C">C</span>
+                    <span class="scale-note" data-note="C#">C♯</span>
+                    <span class="scale-note" data-note="D">D</span>
+                    <span class="scale-note" data-note="D#">D♯</span>
+                    <span class="scale-note" data-note="E">E</span>
+                    <span class="scale-note" data-note="F">F</span>
+                    <span class="scale-note" data-note="F#">F♯</span>
+                    <span class="scale-note" data-note="G">G</span>
+                    <span class="scale-note" data-note="G#">G♯</span>
+                    <span class="scale-note" data-note="A">A</span>
+                    <span class="scale-note" data-note="A#">A♯</span>
+                    <span class="scale-note" data-note="B">B</span>
+                </div>
+            </footer>
+        </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+</body>
+</html>
