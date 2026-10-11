@@ -12,8 +12,11 @@ services:
       - .env
     environment:
       APP_PORT: "8765"
+      SINESTESIA_HTTPS_PORT: "${SINESTESIA_HTTPS_PORT:-18744}"
+    volumes:
+      - ./certificates:/app/static/certificates:ro
     ports:
-      - "${SINESTESIA_BIND_IP:-127.0.0.1}:${SINESTESIA_HOST_PORT:-18743}:8765"
+      - "${SINESTESIA_BIND_IP:-0.0.0.0}:${SINESTESIA_HOST_PORT:-18743}:8765"
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -23,3 +26,27 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 5s
+
+  https:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SINESTESIA_LAN_HOST: "${SINESTESIA_LAN_HOST:-127.0.0.1}"
+    ports:
+      - "${SINESTESIA_BIND_IP:-0.0.0.0}:${SINESTESIA_HTTPS_PORT:-18744}:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy_data:
+  caddy_config:

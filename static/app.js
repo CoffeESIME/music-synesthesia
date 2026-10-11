@@ -21,6 +21,51 @@ const trackState = document.querySelector("#track-state");
 const scaleNotes = [...document.querySelectorAll(".scale-note")];
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const visualizer = new NoteVisualizer(document.querySelector("#note-visualizer"), colorStage, reducedMotion);
+const viewButtons = [...document.querySelectorAll("[data-view]")];
+const motionButton = document.querySelector("#motion-button");
+const fullscreenButton = document.querySelector("#fullscreen-button");
+const stageDescription = document.querySelector("#stage-description");
+let lastDisplayedNote = null;
+
+function updateVisualizerPlayback() {
+    visualizer.setRunning(browserMicrophone.running || (!player.paused && !player.ended));
+}
+
+function selectVisualization(mode) {
+    visualizer.setMode(mode);
+    viewButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.view === mode)));
+    motionButton.hidden = mode === "color";
+    stageDescription.textContent = {
+        cymatic: "Partículas · patrones de interferencia",
+        rings: "Partículas · ondas concéntricas",
+        color: "Color de la nota · perfil sinestésico",
+    }[mode];
+}
+
+viewButtons.forEach((button) => {
+    button.addEventListener("click", () => selectVisualization(button.dataset.view));
+    if (!visualizer.available && button.dataset.view !== "color") button.disabled = true;
+});
+selectVisualization(visualizer.available ? "cymatic" : "color");
+motionButton.addEventListener("click", () => {
+    visualizer.paused = !visualizer.paused;
+    motionButton.setAttribute("aria-pressed", String(visualizer.paused));
+    motionButton.textContent = visualizer.paused ? "Reanudar movimiento" : "Pausar movimiento";
+    visualizer.requestFrame();
+});
+fullscreenButton.hidden = !document.fullscreenEnabled;
+fullscreenButton.addEventListener("click", async () => {
+    try {
+        if (document.fullscreenElement === colorStage) await document.exitFullscreen();
+        else await colorStage.requestFullscreen();
+    } catch {
+        setFeedback("El navegador no pudo abrir la pantalla completa.", "error");
+    }
+});
+document.addEventListener("fullscreenchange", () => {
+    fullscreenButton.textContent = document.fullscreenElement === colorStage ? "Salir de pantalla completa" : "Pantalla completa";
+});
 
 let sinestesiaProfiles = {};
 let songTimeline = [];
@@ -36,6 +81,47 @@ let reconnectAttempt = 0;
 let allowReconnect = true;
 let controlsBusy = false;
 let engineIsRunning = false;
+let listenAttempt = 0;
+let lastMicrophoneNote = null;
+const browserMicrophone = new BrowserMicrophone(handleMicrophoneNote, (message) => {
+    updateMicrophoneControls();
+    updateVisualizerPlayback();
+    setFeedback(message, "error");
+});
+
+function updateMicrophoneControls() {
+    startButton.disabled = controlsBusy || browserMicrophone.running || !profilesReady;
+    stopButton.disabled = !browserMicrophone.running && !browserMicrophone.starting;
+    listenerStatus.textContent = browserMicrophone.running ? "Escuchando aquí" : "En espera";
+    listenerDot.dataset.state = browserMicrophone.running ? "listening" : "idle";
+}
+
+function handleMicrophoneNote(note) {
+    lastMicrophoneNote = note;
+    if (!note) {
+        listenerStatus.textContent = "Esperando sonido";
+        return;
+    }
+    const rgb = sinestesiaProfiles[profileSelect.value]?.[note];
+    if (!isRgb(rgb)) return;
+    listenerStatus.textContent = "Escuchando aquí";
+    showColorEvent(note, rgbToHex(rgb));
+    queueLightColor(rgb);
+}
+
+async function configureMicrophoneAccess() {
+    if (window.isSecureContext && navigator.mediaDevices?.getUserMedia) return;
+    document.querySelector("#microphone-secure-help").hidden = false;
+    const url = new URL(window.location.href);
+    url.protocol = "https:";
+    let port = 18744;
+    try {
+        const config = await apiRequest("/api/client-config");
+        port = config.https_port;
+    } catch { /* Default HTTPS port works with the supplied Compose configuration. */ }
+    url.port = String(port);
+    document.querySelector("#microphone-secure-link").href = url.href;
+}
 
 const requiredElements = [
     startButton,
@@ -71,6 +157,7 @@ function setBusy(isBusy) {
     controlsBusy = isBusy;
     profileSelect.disabled = isBusy || !profilesReady;
     audioFileInput.disabled = isBusy || !profilesReady;
+    updateMicrophoneControls();
 }
 
 function capitalize(value) {
@@ -86,10 +173,8 @@ function isRgb(value) {
 function applyEngineStatus(status) {
     const running = Boolean(status.running);
     engineIsRunning = running;
-    startButton.disabled = running || controlsBusy;
-    stopButton.disabled = !running || controlsBusy;
-    listenerStatus.textContent = running ? "Escuchando" : "En espera";
-    listenerDot.dataset.state = running ? "listening" : "idle";
+    updateVisualizerPlayback();
+    updateMicrophoneControls();
 
     if (typeof status.profile === "string" && sinestesiaProfiles[status.profile]) {
         profileSelect.value = status.profile;
@@ -97,9 +182,7 @@ function applyEngineStatus(status) {
         activeProfileLabel.dataset.profile = status.profile;
     }
 
-    if (status.last_error) {
-        setFeedback(`La escucha se detuvo: ${status.last_error}`, "error");
-    }
+    // Server-side input errors belong to the optional legacy listener, not this mic.
 }
 
 async function apiRequest(path, options = {}) {
@@ -162,48 +245,45 @@ async function refreshStatus({ quiet = false } = {}) {
 }
 
 async function startListening() {
+    const attempt = ++listenAttempt;
     player.pause();
     trackState.textContent = songTimeline.length > 0 ? "Pista en pausa" : "Sin pista";
     setBusy(true);
-    startButton.disabled = true;
-    stopButton.disabled = true;
     startButton.textContent = "Abriendo micrófono…";
     setFeedback("Preparando la entrada de audio…");
 
     try {
-        const status = await apiRequest("/api/listener/start", { method: "POST" });
-        applyEngineStatus(status);
-        setFeedback("Escucha activa. Haz sonar una nota.");
-        window.setTimeout(() => refreshStatus({ quiet: true }), 600);
+        if (engineIsRunning) {
+            applyEngineStatus(await apiRequest("/api/listener/stop", { method: "POST" }));
+        }
+        if (attempt !== listenAttempt) return;
+        const opening = browserMicrophone.start();
+        updateMicrophoneControls();
+        await opening;
+        if (attempt !== listenAttempt) return;
+        lastMicrophoneNote = null;
+        updateVisualizerPlayback();
+        setFeedback("Micrófono de este dispositivo activo. Haz sonar una nota.");
     } catch (error) {
+        if (attempt !== listenAttempt) return;
         setFeedback(`No pudimos iniciar la escucha. ${error.message}`, "error");
-        await refreshStatus({ quiet: true });
     } finally {
-        setBusy(false);
-        startButton.textContent = "Iniciar escucha";
-        await refreshStatus({ quiet: true });
+        if (attempt === listenAttempt) {
+            setBusy(false);
+            startButton.textContent = "Iniciar escucha";
+        }
     }
 }
 
 async function stopListening() {
-    setBusy(true);
-    startButton.disabled = true;
-    stopButton.disabled = true;
-    stopButton.textContent = "Deteniendo…";
-    setFeedback("Cerrando el micrófono…");
-
-    try {
-        const status = await apiRequest("/api/listener/stop", { method: "POST" });
-        applyEngineStatus(status);
-        setFeedback("Micrófono detenido. El último color permanece visible.");
-    } catch (error) {
-        setFeedback(`No pudimos detener la escucha. ${error.message}`, "error");
-        await refreshStatus({ quiet: true });
-    } finally {
-        setBusy(false);
-        stopButton.textContent = "Detener";
-        await refreshStatus({ quiet: true });
-    }
+    listenAttempt += 1;
+    browserMicrophone.stop();
+    lastMicrophoneNote = null;
+    pendingLightColor = null;
+    setBusy(false);
+    startButton.textContent = "Iniciar escucha";
+    updateVisualizerPlayback();
+    setFeedback("Micrófono detenido. La última nota permanece visible.");
 }
 
 async function changeProfile() {
@@ -222,10 +302,15 @@ async function changeProfile() {
         activeProfileLabel.textContent = capitalize(response.profile);
         activeProfileLabel.dataset.profile = response.profile;
         appliedTimelineSignature = "";
-        if (songTimeline.length > 0) {
+        if (browserMicrophone.running) {
+            if (lastMicrophoneNote) handleMicrophoneNote(lastMicrophoneNote);
+            setFeedback(`Perfil ${capitalize(response.profile)} activo en el micrófono.`);
+        } else if (songTimeline.length > 0) {
             syncTrackColor(true);
             setFeedback(`Perfil ${capitalize(response.profile)} aplicado sin reprocesar la pista.`);
         } else {
+            const rgb = sinestesiaProfiles[response.profile]?.[lastDisplayedNote];
+            if (isRgb(rgb)) showColorEvent(lastDisplayedNote, rgbToHex(rgb));
             setFeedback(`Perfil ${capitalize(response.profile)} activo.`);
         }
     } catch (error) {
@@ -276,6 +361,7 @@ async function uploadAudioTrack(file) {
     }
 
     player.pause();
+    if (browserMicrophone.running || browserMicrophone.starting) await stopListening();
     setBusy(true);
     trackState.textContent = "Analizando notas…";
     setFeedback("Extrayendo una línea de tiempo reutilizable…");
@@ -447,6 +533,8 @@ function showColorEvent(note, color) {
     }
 
     const normalizedColor = color.toUpperCase();
+    lastDisplayedNote = note;
+    visualizer.setSignal(note, normalizedColor);
     document.body.style.backgroundColor = normalizedColor;
     colorStage.style.setProperty("--detected-color", normalizedColor);
     colorStage.style.setProperty("--stage-ink", stageInkFor(normalizedColor));
@@ -505,7 +593,7 @@ function connectColorStream() {
     colorSocket.addEventListener("message", (event) => {
         try {
             const message = JSON.parse(event.data);
-            if (songTimeline.length === 0 || engineIsRunning) {
+            if (!browserMicrophone.running && !browserMicrophone.starting && (songTimeline.length === 0 || engineIsRunning)) {
                 showColorEvent(message.nota, message.color);
             }
         } catch (error) {
@@ -533,15 +621,19 @@ audioFileInput.addEventListener("change", () => {
     }
 });
 player.addEventListener("play", () => {
+    if (browserMicrophone.running || browserMicrophone.starting) void stopListening();
+    updateVisualizerPlayback();
     trackState.textContent = "Reproduciendo";
     syncTrackColor(true);
 });
 player.addEventListener("pause", () => {
+    updateVisualizerPlayback();
     if (!player.ended && songTimeline.length > 0) {
         trackState.textContent = "Pista en pausa";
     }
 });
 player.addEventListener("ended", () => {
+    updateVisualizerPlayback();
     trackState.textContent = "Pista terminada";
     activeTimelineIndex = -1;
     appliedTimelineSignature = "";
@@ -552,8 +644,18 @@ player.addEventListener("seeked", () => {
     syncTrackColor(true);
 });
 player.addEventListener("timeupdate", () => syncTrackColor());
+player.addEventListener("error", () => {
+    trackState.textContent = "Error de reproducción";
+    setFeedback("No se pudo reproducir la pista. Vuelve a cargar el archivo WAV o MP3.", "error");
+});
+
+window.addEventListener("pagehide", () => {
+    if (browserMicrophone.running || browserMicrophone.starting) void stopListening();
+});
 
 window.addEventListener("beforeunload", () => {
+    browserMicrophone.stop();
+    visualizer.destroy();
     allowReconnect = false;
     if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer);
@@ -562,6 +664,7 @@ window.addEventListener("beforeunload", () => {
 });
 
 async function initialize() {
+    void configureMicrophoneAccess();
     connectColorStream();
     await loadApplicationData();
     await refreshStatus();

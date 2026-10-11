@@ -20,6 +20,8 @@ __pycache__/
 
 # Archivos subidos o temporales en tiempo de ejecución
 uploads/*
+certificates/*
+!certificates/.gitkeep
 !uploads/.gitkeep
 *.log
 

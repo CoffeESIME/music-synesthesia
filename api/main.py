@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -175,6 +176,12 @@ async def get_status(request: Request) -> EngineStatus:
     """Devuelve el estado actual del motor."""
     engine: SynesthesiaEngine = _get_engine(cast(FastAPI, request.app))
     return _engine_status(engine)
+
+
+@app.get("/api/client-config")
+async def get_client_config() -> dict[str, int]:
+    """Puerto HTTPS público para solicitar el micrófono del navegador en LAN."""
+    return {"https_port": int(os.getenv("SINESTESIA_HTTPS_PORT", "18744"))}
 
 
 @app.post("/api/listener/start", response_model=EngineStatus)

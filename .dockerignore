@@ -13,6 +13,7 @@ __pycache__
 .ruff_cache
 uploads
 temp
+certificates
 Dockerfile*
 compose*.yml
 compose*.yaml

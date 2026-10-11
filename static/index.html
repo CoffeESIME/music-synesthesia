@@ -518,6 +518,7 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="/static/visualizer.css">
 </head>
 <body>
     <a class="skip-link" href="#main-content">Ir a la señal actual</a>
@@ -526,7 +527,7 @@
             <header class="masthead">
                 <p class="eyebrow">Audio · color · luz</p>
                 <h1 id="page-title">Proyecto Sinestesia</h1>
-                <p class="intro">Haz sonar una nota o carga una pista. La pantalla y tus luces Hue compartirán el mismo color.</p>
+                <p class="intro">Haz sonar una nota o carga una pista. Descubre su forma y su color, en sintonía con tus luces Hue.</p>
             </header>
 
             <div class="controls">
@@ -536,6 +537,8 @@
                         <button class="transport-button primary" id="start-button" type="button">Iniciar escucha</button>
                         <button class="transport-button stop" id="stop-button" type="button" disabled>Detener</button>
                     </div>
+                    <p class="visualization-help" id="microphone-help">Escucha el micrófono de este dispositivo. El audio se analiza aquí y no se reproduce por los altavoces.</p>
+                    <p class="visualization-help" id="microphone-secure-help" hidden>Para habilitar el micrófono en la red local, <a id="microphone-secure-link">abre la versión HTTPS</a> y confía en el <a href="/static/certificates/local-ca.crt" download>certificado local</a> en este dispositivo.</p>
                 </div>
 
                 <div class="profile-picker" id="profile-picker">
@@ -549,6 +552,16 @@
                             <option value="chakras">Chakras</option>
                         </select>
                     </div>
+                </div>
+
+                <div class="visualization-picker" role="group" aria-labelledby="visualization-label" aria-describedby="visualization-help">
+                    <p class="section-label" id="visualization-label">Forma del sonido</p>
+                    <div class="view-options">
+                        <button type="button" class="view-option" data-view="cymatic" aria-pressed="true">Patrones</button>
+                        <button type="button" class="view-option" data-view="rings" aria-pressed="false">Anillos</button>
+                        <button type="button" class="view-option" data-view="color" aria-pressed="false">Solo color</button>
+                    </div>
+                    <p class="visualization-help" id="visualization-help">Cada nota dibuja una forma; el perfil le da su color. Interpretación artística inspirada en la cimática.</p>
                 </div>
 
                 <section class="track-mode" aria-labelledby="track-title">
@@ -572,7 +585,7 @@
 
             <footer class="panel-footer">
                 <div class="status-row">
-                    <span class="status-name">Micrófono</span>
+                    <span class="status-name">Micrófono de este dispositivo</span>
                     <span class="status-value"><i class="status-dot" id="listener-dot" aria-hidden="true"></i><span id="listener-status">En espera</span></span>
                 </div>
                 <div class="status-row">
@@ -583,17 +596,25 @@
             </footer>
         </section>
 
-        <section class="color-stage" id="main-content" aria-label="Color detectado">
+        <section class="color-stage" id="main-content" data-visualization="cymatic" aria-label="Forma y color de la nota">
             <header class="stage-header">
                 <span class="stage-kicker">Señal actual</span>
                 <output class="stage-hex" id="color-hex" aria-label="Color hexadecimal">#D9D2C3</output>
             </header>
 
             <div class="note-space" aria-live="polite" aria-atomic="true">
+                <canvas class="visualizer-canvas" id="note-visualizer" role="img" aria-label="Esperando una nota para dibujar su patrón"></canvas>
                 <p class="note-display" id="note-display">—</p>
                 <p class="note-caption" id="note-caption">Esperando una nota</p>
             </div>
 
+            <div class="stage-toolbar">
+                <p class="stage-description" id="stage-description">Partículas · patrones de interferencia</p>
+                <div class="stage-actions">
+                    <button class="stage-action" id="motion-button" type="button" aria-pressed="false">Pausar movimiento</button>
+                    <button class="stage-action" id="fullscreen-button" type="button" hidden>Pantalla completa</button>
+                </div>
+            </div>
             <footer class="stage-footer">
                 <span id="active-profile-label">Scriabin</span>
                 <div class="chromatic-scale" aria-label="Escala cromática">
@@ -613,6 +634,8 @@
             </footer>
         </section>
     </main>
+    <script src="/static/visualizer.js" defer></script>
+    <script src="/static/microphone.js" defer></script>
     <script src="/static/app.js" defer></script>
 </body>
 </html>
