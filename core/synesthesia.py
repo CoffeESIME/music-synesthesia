@@ -1,7 +1,6 @@
 """Perfiles de correspondencia entre notas cromaticas y colores RGB."""
 
 
-# Extension cromatica del circulo de colores propuesto por Isaac Newton.
 PERFIL_NEWTON: dict[str, list[int]] = {
     "C": [255, 0, 0],
     "C#": [255, 64, 0],
@@ -17,7 +16,6 @@ PERFIL_NEWTON: dict[str, list[int]] = {
     "B": [255, 0, 255],
 }
 
-# Aproximacion RGB de la tabla de correspondencias de Alexander Scriabin.
 PERFIL_SCRIABIN: dict[str, list[int]] = {
     "C": [255, 0, 0],
     "C#": [148, 0, 211],
@@ -33,7 +31,55 @@ PERFIL_SCRIABIN: dict[str, list[int]] = {
     "B": [0, 191, 255],
 }
 
-PERFILES: dict[str, dict[str, list[int]]] = {
+PERFIL_KORSAKOV: dict[str, list[int]] = {
+    "C": [255, 255, 255],
+    "C#": [255, 255, 128],
+    "D": [255, 255, 0],
+    "D#": [128, 160, 90],
+    "E": [15, 82, 186],
+    "F": [0, 255, 0],
+    "F#": [128, 180, 100],
+    "G": [255, 215, 0],
+    "G#": [200, 150, 150],
+    "A": [255, 105, 180],
+    "A#": [150, 50, 160],
+    "B": [0, 0, 139],
+}
+
+PERFIL_CASTEL: dict[str, list[int]] = {
+    "C": [0, 0, 255],
+    "C#": [46, 139, 87],
+    "D": [0, 255, 0],
+    "D#": [128, 128, 0],
+    "E": [255, 255, 0],
+    "F": [255, 200, 0],
+    "F#": [255, 140, 0],
+    "G": [255, 0, 0],
+    "G#": [220, 20, 60],
+    "A": [238, 130, 238],
+    "A#": [218, 112, 214],
+    "B": [75, 0, 130],
+}
+
+PERFIL_CHAKRAS: dict[str, list[int]] = {
+    "C": [255, 0, 0],
+    "C#": [255, 64, 0],
+    "D": [255, 127, 0],
+    "D#": [255, 191, 0],
+    "E": [255, 255, 0],
+    "F": [0, 255, 0],
+    "F#": [0, 255, 127],
+    "G": [0, 0, 255],
+    "G#": [37, 0, 180],
+    "A": [75, 0, 130],
+    "A#": [138, 0, 180],
+    "B": [148, 0, 211],
+}
+
+ALL_PROFILES: dict[str, dict[str, list[int]]] = {
     "newton": PERFIL_NEWTON,
     "scriabin": PERFIL_SCRIABIN,
+    "korsakov": PERFIL_KORSAKOV,
+    "castel": PERFIL_CASTEL,
+    "chakras": PERFIL_CHAKRAS,
 }

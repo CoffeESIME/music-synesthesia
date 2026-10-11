@@ -8,7 +8,7 @@ import logging
 import threading
 from typing import Protocol
 
-from core.synesthesia import PERFILES
+from core.synesthesia import ALL_PROFILES
 
 
 LOGGER: logging.Logger = logging.getLogger(__name__)
@@ -82,8 +82,8 @@ class SynesthesiaEngine:
     @staticmethod
     def _normalize_profile(profile_name: str) -> str:
         normalized_profile: str = profile_name.strip().lower()
-        if normalized_profile not in PERFILES:
-            available: str = ", ".join(sorted(PERFILES))
+        if normalized_profile not in ALL_PROFILES:
+            available: str = ", ".join(sorted(ALL_PROFILES))
             raise ValueError(f"Perfil desconocido. Disponibles: {available}")
         return normalized_profile
 
@@ -187,7 +187,7 @@ class SynesthesiaEngine:
     def _get_rgb(self, note: str) -> tuple[int, int, int] | None:
         with self._state_lock:
             profile_name: str = self._profile_name
-        values: list[int] | None = PERFILES[profile_name].get(note)
+        values: list[int] | None = ALL_PROFILES[profile_name].get(note)
         if values is None:
             return None
         return (values[0], values[1], values[2])

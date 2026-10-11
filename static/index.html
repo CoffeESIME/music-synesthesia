@@ -48,7 +48,8 @@
         }
 
         button,
-        input {
+        input,
+        select {
             font: inherit;
         }
 
@@ -190,7 +191,7 @@
         }
 
         .transport-button:focus-visible,
-        .profile-option input:focus-visible + span,
+        .profile-select:focus-visible,
         .audio-file-input:focus-visible + .file-trigger {
             outline: 3px solid var(--accent);
             outline-offset: 3px;
@@ -204,59 +205,42 @@
         }
 
         .profile-legend {
+            display: block;
             margin-bottom: 0.75rem;
             color: var(--ink-soft);
         }
 
-        .profile-options {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 0.5rem;
-        }
-
-        .profile-option {
+        .profile-select-wrap {
             position: relative;
-            min-width: 0;
-            cursor: pointer;
         }
 
-        .profile-option input {
+        .profile-select-wrap::after {
             position: absolute;
-            width: 1px;
-            height: 1px;
-            opacity: 0;
-        }
-
-        .profile-option span {
-            display: flex;
-            min-height: 2.75rem;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0.625rem 0.75rem;
-            border: 1px solid var(--line);
-            color: var(--ink-soft);
-            transition: border-color 150ms var(--ease-toggle), color 150ms var(--ease-toggle), transform 100ms var(--ease-out);
-        }
-
-        .profile-option span::after {
-            width: 0.5rem;
-            height: 0.5rem;
-            border: 1px solid currentColor;
-            border-radius: 50%;
+            top: 50%;
+            right: 0.9rem;
+            color: var(--accent);
             content: "";
+            border-top: 0.4rem solid currentColor;
+            border-right: 0.3rem solid transparent;
+            border-left: 0.3rem solid transparent;
+            pointer-events: none;
+            transform: translateY(-35%);
         }
 
-        .profile-option input:checked + span {
-            border-color: var(--ink);
+        .profile-select {
+            width: 100%;
+            min-height: 3rem;
+            appearance: none;
+            padding: 0.7rem 2.75rem 0.7rem 0.75rem;
+            border: 1px solid var(--ink);
+            border-radius: 0;
+            background: transparent;
             color: var(--ink);
+            cursor: pointer;
+            transition: background-color 150ms var(--ease-toggle), color 150ms var(--ease-toggle);
         }
 
-        .profile-option input:checked + span::after {
-            background: var(--accent);
-            border-color: var(--accent);
-        }
-
-        .profile-option input:disabled + span {
+        .profile-select:disabled {
             cursor: not-allowed;
             opacity: 0.5;
         }
@@ -487,7 +471,10 @@
                 color: var(--paper);
             }
 
-            .profile-option:hover span { border-color: var(--ink); }
+            .profile-select:hover:not(:disabled) {
+                background: var(--ink);
+                color: var(--paper);
+            }
 
             .file-trigger:hover {
                 background: var(--ink);
@@ -516,7 +503,7 @@
 
         @media (pointer: coarse) {
             .transport-button,
-            .profile-option span,
+            .profile-select,
             .file-trigger { min-height: 3rem; }
         }
 
@@ -551,19 +538,18 @@
                     </div>
                 </div>
 
-                <fieldset class="profile-picker" id="profile-picker">
-                    <legend class="profile-legend">Perfil sinestésico</legend>
-                    <div class="profile-options">
-                        <label class="profile-option">
-                            <input type="radio" name="profile" value="newton">
-                            <span>Newton</span>
-                        </label>
-                        <label class="profile-option">
-                            <input type="radio" name="profile" value="scriabin" checked>
-                            <span>Scriabin</span>
-                        </label>
+                <div class="profile-picker" id="profile-picker">
+                    <label class="profile-legend" for="profile-select">Perfil sinestésico</label>
+                    <div class="profile-select-wrap">
+                        <select class="profile-select" id="profile-select" disabled>
+                            <option value="newton">Newton</option>
+                            <option value="scriabin" selected>Scriabin</option>
+                            <option value="korsakov">Korsakov</option>
+                            <option value="castel">Castel</option>
+                            <option value="chakras">Chakras</option>
+                        </select>
                     </div>
-                </fieldset>
+                </div>
 
                 <section class="track-mode" aria-labelledby="track-title">
                     <div class="track-heading">

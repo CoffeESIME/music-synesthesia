@@ -23,8 +23,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from core.config import HUE_LIGHT_IDS
-from core.synesthesia import PERFILES
+from core.synesthesia import ALL_PROFILES
 from engine.synesthesia_engine import ColorEvent, SynesthesiaEngine
+from hardware.hue_client import HueController
 
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
@@ -48,34 +49,42 @@ class ProfileResponse(BaseModel):
     profile: str
 
 
-class LightingCueResponse(BaseModel):
-    """Cue temporal producido por el analizador de pista."""
+class NoteTimelineEntry(BaseModel):
+    """Nota dominante detectada en un instante de la pista."""
 
-    time_sec: float
-    color_hex: str
+    time: float
     note: str
 
 
 class AudioUploadResponse(BaseModel):
-    """Resultado de carga junto con la URL reproducible del audio."""
+    """URL reproducible y linea de tiempo pura de notas."""
 
     audio_url: str
-    lighting_map: list[LightingCueResponse]
+    timeline: list[NoteTimelineEntry]
 
 
-class TrackColorCommand(BaseModel):
-    """Color que debe aplicarse durante la reproduccion de una pista."""
+class LightListResponse(BaseModel):
+    """IDs de luces que puede controlar el frontend."""
 
-    note: str = Field(min_length=1, max_length=2)
-    color_hex: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
-    transition_ms: int = Field(default=100, ge=0, le=60_000)
+    light_ids: list[str]
 
 
-class TrackColorResponse(BaseModel):
-    """Confirmacion del ultimo cue aplicado."""
+class SetLightCommand(BaseModel):
+    """Comando RGB validado para una luz Hue concreta."""
 
-    note: str
-    color_hex: str
+    light_id: str = Field(min_length=1)
+    r: int = Field(ge=0, le=255)
+    g: int = Field(ge=0, le=255)
+    b: int = Field(ge=0, le=255)
+    transition: int = Field(default=100, ge=0, le=60_000)
+
+
+class SetLightResponse(BaseModel):
+    """Confirmacion del color enviado al adaptador Hue."""
+
+    light_id: str
+    rgb: tuple[int, int, int]
+    transition: int
 
 
 class AudioFileTooLargeError(ValueError):
@@ -96,21 +105,20 @@ def _save_audio_upload(upload: UploadFile, destination: Path) -> None:
             output.write(chunk)
 
 
-def _hex_to_rgb(color_hex: str) -> tuple[int, int, int]:
-    """Convierte un hexadecimal validado a una tupla RGB."""
-    return (
-        int(color_hex[1:3], 16),
-        int(color_hex[3:5], 16),
-        int(color_hex[5:7], 16),
-    )
-
-
 def _get_engine(app: FastAPI) -> SynesthesiaEngine:
     """Obtiene el motor inicializado durante el lifespan de la aplicacion."""
     engine: object | None = getattr(app.state, "engine", None)
     if not isinstance(engine, SynesthesiaEngine):
         raise HTTPException(status_code=503, detail="El motor no esta disponible")
     return engine
+
+
+def _get_hue_controller(app: FastAPI) -> HueController:
+    """Obtiene el adaptador Hue inicializado durante el lifespan."""
+    controller: object | None = getattr(app.state, "hue_controller", None)
+    if not isinstance(controller, HueController):
+        raise HTTPException(status_code=503, detail="El controlador Hue no esta disponible")
+    return controller
 
 
 def _engine_status(engine: SynesthesiaEngine) -> EngineStatus:
@@ -131,7 +139,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Imports diferidos: importar la API no abre ni requiere el dispositivo de audio.
     from audio.pitch_detector import AudioListener
-    from hardware.hue_client import HueController
 
     listener = AudioListener()
     hue_controller = HueController()
@@ -143,6 +150,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         transition_ms=100,
     )
     app.state.engine = engine
+    app.state.hue_controller = hue_controller
     try:
         yield
     finally:
@@ -187,6 +195,24 @@ async def stop_listener(request: Request) -> EngineStatus:
     return _engine_status(engine)
 
 
+@app.get("/api/profiles")
+async def get_profiles() -> dict[str, dict[str, list[int]]]:
+    """Expone los perfiles RGB para el mapeo dinamico en el frontend."""
+    return {
+        profile_name: {
+            note: list(rgb)
+            for note, rgb in profile.items()
+        }
+        for profile_name, profile in ALL_PROFILES.items()
+    }
+
+
+@app.get("/api/lights", response_model=LightListResponse)
+async def get_lights() -> LightListResponse:
+    """Expone los IDs configurados que puede actualizar el reproductor."""
+    return LightListResponse(light_ids=list(HUE_LIGHT_IDS))
+
+
 @app.post("/api/profile/{name}", response_model=ProfileResponse)
 async def change_profile(name: str, request: Request) -> ProfileResponse:
     """Cambia el perfil sinestetico de forma segura mientras el motor corre."""
@@ -198,15 +224,45 @@ async def change_profile(name: str, request: Request) -> ProfileResponse:
     return ProfileResponse(profile=engine.active_profile)
 
 
-@app.post("/upload_audio", response_model=AudioUploadResponse)
-async def upload_audio(
+@app.post("/api/set_light", response_model=SetLightResponse)
+async def set_light(
+    command: SetLightCommand,
     request: Request,
+) -> SetLightResponse:
+    """Envia un RGB a una luz Hue fuera del Event Loop de FastAPI."""
+    light_id: str = command.light_id.strip()
+    if light_id not in HUE_LIGHT_IDS:
+        raise HTTPException(status_code=404, detail="La luz solicitada no esta configurada")
+
+    controller: HueController = _get_hue_controller(cast(FastAPI, request.app))
+    rgb: tuple[int, int, int] = (command.r, command.g, command.b)
+    try:
+        await asyncio.to_thread(
+            controller.set_color,
+            light_id,
+            rgb,
+            command.transition,
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No fue posible actualizar la luz Hue: {error}",
+        ) from error
+
+    return SetLightResponse(
+        light_id=light_id,
+        rgb=rgb,
+        transition=command.transition,
+    )
+
+
+@app.post("/api/upload", response_model=AudioUploadResponse)
+async def upload_audio(
     file: UploadFile = File(...),
 ) -> AudioUploadResponse:
-    """Guarda y analiza una pista WAV o MP3 fuera del Event Loop."""
+    """Guarda una pista y extrae su timeline de notas una sola vez."""
     from audio.file_analyzer import analyze_audio_file
 
-    engine: SynesthesiaEngine = _get_engine(cast(FastAPI, request.app))
     original_name: str = file.filename or ""
     suffix: str = Path(original_name).suffix.lower()
     if suffix not in ALLOWED_AUDIO_SUFFIXES:
@@ -218,16 +274,11 @@ async def upload_audio(
 
     stored_name: str = f"{uuid4().hex}{suffix}"
     destination: Path = TEMP_DIR / stored_name
-    profile: dict[str, list[int]] = {
-        note: list(rgb)
-        for note, rgb in PERFILES[engine.active_profile].items()
-    }
     try:
         await asyncio.to_thread(_save_audio_upload, file, destination)
-        lighting_map: list[dict[str, float | str]] = await asyncio.to_thread(
+        timeline: list[dict[str, float | str]] = await asyncio.to_thread(
             analyze_audio_file,
             str(destination),
-            profile,
         )
     except AudioFileTooLargeError as error:
         await asyncio.to_thread(destination.unlink, missing_ok=True)
@@ -243,44 +294,14 @@ async def upload_audio(
 
     return AudioUploadResponse(
         audio_url=f"/temp/{stored_name}",
-        lighting_map=[
-            LightingCueResponse(
-                time_sec=float(cue["time_sec"]),
-                color_hex=str(cue["color_hex"]),
+        timeline=[
+            NoteTimelineEntry(
+                time=float(cue["time"]),
                 note=str(cue["note"]),
             )
-            for cue in lighting_map
+            for cue in timeline
         ],
     )
-
-
-@app.post("/api/track/color", response_model=TrackColorResponse)
-async def apply_track_color(
-    command: TrackColorCommand,
-    request: Request,
-) -> TrackColorResponse:
-    """Aplica un cue de pista sin bloquear el Event Loop de FastAPI."""
-    engine: SynesthesiaEngine = _get_engine(cast(FastAPI, request.app))
-    if engine.is_running:
-        raise HTTPException(
-            status_code=409,
-            detail="Deten la escucha en vivo antes de reproducir una pista",
-        )
-
-    normalized_hex: str = command.color_hex.upper()
-    try:
-        await asyncio.to_thread(
-            engine.apply_track_color,
-            command.note,
-            _hex_to_rgb(normalized_hex),
-            command.transition_ms,
-        )
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"No fue posible actualizar las luces Hue: {error}",
-        ) from error
-    return TrackColorResponse(note=command.note, color_hex=normalized_hex)
 
 
 async def _wait_for_disconnect(websocket: WebSocket) -> None:

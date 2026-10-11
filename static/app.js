@@ -2,7 +2,7 @@
 
 const startButton = document.querySelector("#start-button");
 const stopButton = document.querySelector("#stop-button");
-const profileInputs = [...document.querySelectorAll('input[name="profile"]')];
+const profileSelect = document.querySelector("#profile-select");
 const listenerStatus = document.querySelector("#listener-status");
 const listenerDot = document.querySelector("#listener-dot");
 const socketStatus = document.querySelector("#socket-status");
@@ -22,20 +22,25 @@ const scaleNotes = [...document.querySelectorAll(".scale-note")];
 const themeMeta = document.querySelector('meta[name="theme-color"]');
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+let sinestesiaProfiles = {};
+let songTimeline = [];
+let lightIds = [];
+let activeTimelineIndex = -1;
+let appliedTimelineSignature = "";
+let pendingLightColor = null;
+let sendingLightColor = false;
+let profilesReady = false;
 let colorSocket = null;
 let reconnectTimer = null;
 let reconnectAttempt = 0;
 let allowReconnect = true;
 let controlsBusy = false;
 let engineIsRunning = false;
-let lightingMap = [];
-let activeTrackCueIndex = -1;
-let pendingTrackCue = null;
-let sendingTrackCue = false;
 
 const requiredElements = [
     startButton,
     stopButton,
+    profileSelect,
     listenerStatus,
     listenerDot,
     socketStatus,
@@ -64,14 +69,18 @@ function setFeedback(message, tone = "neutral") {
 
 function setBusy(isBusy) {
     controlsBusy = isBusy;
-    profileInputs.forEach((input) => {
-        input.disabled = isBusy;
-    });
-    audioFileInput.disabled = isBusy;
+    profileSelect.disabled = isBusy || !profilesReady;
+    audioFileInput.disabled = isBusy || !profilesReady;
 }
 
 function capitalize(value) {
     return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function isRgb(value) {
+    return Array.isArray(value)
+        && value.length === 3
+        && value.every((channel) => Number.isInteger(channel) && channel >= 0 && channel <= 255);
 }
 
 function applyEngineStatus(status) {
@@ -82,12 +91,10 @@ function applyEngineStatus(status) {
     listenerStatus.textContent = running ? "Escuchando" : "En espera";
     listenerDot.dataset.state = running ? "listening" : "idle";
 
-    if (typeof status.profile === "string") {
-        const normalizedProfile = status.profile.toLowerCase();
-        profileInputs.forEach((input) => {
-            input.checked = input.value === normalizedProfile;
-        });
-        activeProfileLabel.textContent = capitalize(normalizedProfile);
+    if (typeof status.profile === "string" && sinestesiaProfiles[status.profile]) {
+        profileSelect.value = status.profile;
+        activeProfileLabel.textContent = capitalize(status.profile);
+        activeProfileLabel.dataset.profile = status.profile;
     }
 
     if (status.last_error) {
@@ -113,6 +120,36 @@ async function apiRequest(path, options = {}) {
     return payload;
 }
 
+async function loadApplicationData() {
+    setBusy(true);
+    setFeedback("Cargando perfiles históricos y luces…");
+    try {
+        const [profiles, lightsResponse] = await Promise.all([
+            apiRequest("/api/profiles"),
+            apiRequest("/api/lights"),
+        ]);
+        if (typeof profiles !== "object" || profiles === null || Object.keys(profiles).length === 0) {
+            throw new Error("El servidor no devolvió perfiles sinestésicos.");
+        }
+        if (!Array.isArray(lightsResponse.light_ids) || lightsResponse.light_ids.length === 0) {
+            throw new Error("No hay focos Hue configurados.");
+        }
+
+        sinestesiaProfiles = profiles;
+        lightIds = lightsResponse.light_ids.filter((lightId) => typeof lightId === "string");
+        [...profileSelect.options].forEach((option) => {
+            option.disabled = !sinestesiaProfiles[option.value];
+        });
+        profilesReady = true;
+        setFeedback(`${Object.keys(sinestesiaProfiles).length} perfiles listos para usar.`);
+    } catch (error) {
+        profilesReady = false;
+        setFeedback(`No pudimos cargar la configuración. ${error.message}`, "error");
+    } finally {
+        setBusy(false);
+    }
+}
+
 async function refreshStatus({ quiet = false } = {}) {
     try {
         const status = await apiRequest("/api/status");
@@ -126,7 +163,7 @@ async function refreshStatus({ quiet = false } = {}) {
 
 async function startListening() {
     player.pause();
-    trackState.textContent = lightingMap.length > 0 ? "Pista en pausa" : "Sin pista";
+    trackState.textContent = songTimeline.length > 0 ? "Pista en pausa" : "Sin pista";
     setBusy(true);
     startButton.disabled = true;
     stopButton.disabled = true;
@@ -169,31 +206,32 @@ async function stopListening() {
     }
 }
 
-async function changeProfile(input) {
-    const previousProfile = activeProfileLabel.textContent.toLowerCase();
-    const nextProfile = input.value;
+async function changeProfile() {
+    const previousProfile = activeProfileLabel.dataset.profile || "scriabin";
+    const nextProfile = profileSelect.value;
     activeProfileLabel.textContent = capitalize(nextProfile);
+    activeProfileLabel.dataset.profile = nextProfile;
     setBusy(true);
-    setFeedback(`Cambiando al perfil ${capitalize(nextProfile)}…`);
+    setFeedback(`Aplicando el perfil ${capitalize(nextProfile)}…`);
 
     try {
         const response = await apiRequest(`/api/profile/${encodeURIComponent(nextProfile)}`, {
             method: "POST",
         });
+        profileSelect.value = response.profile;
         activeProfileLabel.textContent = capitalize(response.profile);
-        if (lightingMap.length > 0) {
-            clearTrack();
-            setFeedback(
-                `Perfil ${capitalize(response.profile)} activo. Carga de nuevo la pista para recalcular sus colores.`,
-            );
+        activeProfileLabel.dataset.profile = response.profile;
+        appliedTimelineSignature = "";
+        if (songTimeline.length > 0) {
+            syncTrackColor(true);
+            setFeedback(`Perfil ${capitalize(response.profile)} aplicado sin reprocesar la pista.`);
         } else {
             setFeedback(`Perfil ${capitalize(response.profile)} activo.`);
         }
     } catch (error) {
-        profileInputs.forEach((profileInput) => {
-            profileInput.checked = profileInput.value === previousProfile;
-        });
+        profileSelect.value = previousProfile;
         activeProfileLabel.textContent = capitalize(previousProfile);
+        activeProfileLabel.dataset.profile = previousProfile;
         setFeedback(`No pudimos cambiar el perfil. ${error.message}`, "error");
     } finally {
         setBusy(false);
@@ -205,9 +243,10 @@ function clearTrack() {
     player.pause();
     player.removeAttribute("src");
     player.load();
-    lightingMap = [];
-    activeTrackCueIndex = -1;
-    pendingTrackCue = null;
+    songTimeline = [];
+    activeTimelineIndex = -1;
+    appliedTimelineSignature = "";
+    pendingLightColor = null;
     trackName.textContent = "";
     trackState.textContent = "Sin pista";
     trackPlayer.hidden = true;
@@ -218,16 +257,28 @@ function isSupportedAudioFile(file) {
     return normalizedName.endsWith(".wav") || normalizedName.endsWith(".mp3");
 }
 
+function isTimelineEntry(entry) {
+    return typeof entry === "object"
+        && entry !== null
+        && Number.isFinite(entry.time)
+        && entry.time >= 0
+        && typeof entry.note === "string";
+}
+
 async function uploadAudioTrack(file) {
     if (!isSupportedAudioFile(file)) {
         setFeedback("La pista debe ser un archivo WAV o MP3.", "error");
         return;
     }
+    if (!profilesReady) {
+        setFeedback("Los perfiles todavía no están disponibles. Recarga la página.", "error");
+        return;
+    }
 
     player.pause();
     setBusy(true);
-    trackState.textContent = "Analizando…";
-    setFeedback("Analizando armonía y construyendo el mapa de iluminación…");
+    trackState.textContent = "Analizando notas…";
+    setFeedback("Extrayendo una línea de tiempo reutilizable…");
     const formData = new FormData();
     formData.append("file", file);
 
@@ -236,23 +287,27 @@ async function uploadAudioTrack(file) {
             const status = await apiRequest("/api/listener/stop", { method: "POST" });
             applyEngineStatus(status);
         }
-        const response = await apiRequest("/upload_audio", {
+        const response = await apiRequest("/api/upload", {
             method: "POST",
             body: formData,
         });
-        if (!Array.isArray(response.lighting_map) || response.lighting_map.length === 0) {
+        if (!Array.isArray(response.timeline) || response.timeline.length === 0) {
             throw new Error("No detectamos notas suficientes en esta pista.");
         }
+        if (!response.timeline.every(isTimelineEntry)) {
+            throw new Error("La línea de tiempo recibida no tiene un formato válido.");
+        }
 
-        lightingMap = response.lighting_map;
-        activeTrackCueIndex = -1;
-        pendingTrackCue = null;
+        songTimeline = response.timeline;
+        activeTimelineIndex = -1;
+        appliedTimelineSignature = "";
+        pendingLightColor = null;
         player.src = response.audio_url;
         player.load();
         trackName.textContent = file.name;
-        trackState.textContent = `${lightingMap.length} cambios`;
+        trackState.textContent = `${songTimeline.length} cambios de nota`;
         trackPlayer.hidden = false;
-        setFeedback("Mapa listo. Reproduce la pista para dirigir las luces.");
+        setFeedback("Timeline listo. Puedes cambiar de perfil sin analizar de nuevo.");
     } catch (error) {
         clearTrack();
         setFeedback(`No pudimos preparar la pista. ${error.message}`, "error");
@@ -263,13 +318,13 @@ async function uploadAudioTrack(file) {
     }
 }
 
-function findTrackCueIndex(timeSeconds) {
+function binarySearchTimeline(timeSeconds) {
     let low = 0;
-    let high = lightingMap.length - 1;
+    let high = songTimeline.length - 1;
     let match = -1;
     while (low <= high) {
         const middle = Math.floor((low + high) / 2);
-        if (lightingMap[middle].time_sec <= timeSeconds) {
+        if (songTimeline[middle].time <= timeSeconds) {
             match = middle;
             low = middle + 1;
         } else {
@@ -279,50 +334,94 @@ function findTrackCueIndex(timeSeconds) {
     return match;
 }
 
-function queueTrackCue(cue) {
-    pendingTrackCue = cue;
-    if (!sendingTrackCue) {
-        drainTrackCueQueue();
+function findActiveTimelineIndex(timeSeconds) {
+    if (
+        activeTimelineIndex < 0
+        || activeTimelineIndex >= songTimeline.length
+        || songTimeline[activeTimelineIndex].time > timeSeconds
+    ) {
+        activeTimelineIndex = binarySearchTimeline(timeSeconds);
+        return activeTimelineIndex;
+    }
+
+    while (
+        activeTimelineIndex + 1 < songTimeline.length
+        && songTimeline[activeTimelineIndex + 1].time <= timeSeconds
+    ) {
+        activeTimelineIndex += 1;
+    }
+    return activeTimelineIndex;
+}
+
+function rgbToHex(rgb) {
+    return `#${rgb.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+}
+
+function queueLightColor(rgb) {
+    pendingLightColor = [...rgb];
+    if (!sendingLightColor) {
+        void drainLightColorQueue();
     }
 }
 
-async function drainTrackCueQueue() {
-    sendingTrackCue = true;
-    while (pendingTrackCue !== null) {
-        const cue = pendingTrackCue;
-        pendingTrackCue = null;
-        try {
-            await apiRequest("/api/track/color", {
+async function drainLightColorQueue() {
+    sendingLightColor = true;
+    while (pendingLightColor !== null) {
+        const [r, g, b] = pendingLightColor;
+        pendingLightColor = null;
+        const results = await Promise.allSettled(
+            lightIds.map((lightId) => apiRequest("/api/set_light", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    note: cue.note,
-                    color_hex: cue.color_hex,
-                    transition_ms: 100,
+                    light_id: lightId,
+                    r,
+                    g,
+                    b,
+                    transition: 100,
                 }),
-            });
-        } catch (error) {
-            player.pause();
-            setFeedback(`La pista se pausó porque Hue no respondió. ${error.message}`, "error");
-            pendingTrackCue = null;
+            })),
+        );
+        const failures = results.filter((result) => result.status === "rejected");
+        if (failures.length > 0) {
+            setFeedback(
+                `${failures.length} foco(s) no respondieron; la reproducción continúa.`,
+                "error",
+            );
         }
     }
-    sendingTrackCue = false;
+    sendingLightColor = false;
 }
 
-function syncTrackColor() {
-    if (player.paused || lightingMap.length === 0) {
+function syncTrackColor(force = false) {
+    if (songTimeline.length === 0 || (!force && player.paused)) {
         return;
     }
-    const cueIndex = findTrackCueIndex(player.currentTime);
-    if (cueIndex < 0 || cueIndex === activeTrackCueIndex) {
+    const timelineIndex = findActiveTimelineIndex(player.currentTime);
+    if (timelineIndex < 0) {
         return;
     }
 
-    activeTrackCueIndex = cueIndex;
-    const cue = lightingMap[cueIndex];
-    showColorEvent(cue.note, cue.color_hex);
-    queueTrackCue(cue);
+    const activeNote = songTimeline[timelineIndex].note;
+    const selectedProfile = profileSelect.value;
+    const rgb = sinestesiaProfiles[selectedProfile]?.[activeNote];
+    if (!isRgb(rgb)) {
+        setFeedback(
+            `El perfil ${capitalize(selectedProfile)} no contiene la nota ${activeNote}.`,
+            "error",
+        );
+        return;
+    }
+
+    const signature = `${timelineIndex}:${selectedProfile}:${rgb.join(",")}`;
+    if (!force && signature === appliedTimelineSignature) {
+        return;
+    }
+    appliedTimelineSignature = signature;
+
+    document.body.style.backgroundColor = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    showColorEvent(activeNote, rgbToHex(rgb));
+    queueLightColor(rgb);
 }
 
 function isValidHexColor(value) {
@@ -330,7 +429,9 @@ function isValidHexColor(value) {
 }
 
 function stageInkFor(hexColor) {
-    const channels = [1, 3, 5].map((index) => Number.parseInt(hexColor.slice(index, index + 2), 16) / 255);
+    const channels = [1, 3, 5].map(
+        (index) => Number.parseInt(hexColor.slice(index, index + 2), 16) / 255,
+    );
     const linear = channels.map((channel) => (
         channel <= 0.04045
             ? channel / 12.92
@@ -346,6 +447,7 @@ function showColorEvent(note, color) {
     }
 
     const normalizedColor = color.toUpperCase();
+    document.body.style.backgroundColor = normalizedColor;
     colorStage.style.setProperty("--detected-color", normalizedColor);
     colorStage.style.setProperty("--stage-ink", stageInkFor(normalizedColor));
     colorHex.textContent = normalizedColor;
@@ -403,7 +505,9 @@ function connectColorStream() {
     colorSocket.addEventListener("message", (event) => {
         try {
             const message = JSON.parse(event.data);
-            showColorEvent(message.nota, message.color);
+            if (songTimeline.length === 0 || engineIsRunning) {
+                showColorEvent(message.nota, message.color);
+            }
         } catch (error) {
             setFeedback("Recibimos una señal de color que no pudimos interpretar.", "error");
         }
@@ -421,36 +525,33 @@ function connectColorStream() {
 
 startButton.addEventListener("click", startListening);
 stopButton.addEventListener("click", stopListening);
-profileInputs.forEach((input) => {
-    input.addEventListener("change", () => {
-        if (input.checked) {
-            changeProfile(input);
-        }
-    });
-});
+profileSelect.addEventListener("change", changeProfile);
 audioFileInput.addEventListener("change", () => {
     const [file] = audioFileInput.files;
     if (file) {
-        uploadAudioTrack(file);
+        void uploadAudioTrack(file);
     }
 });
 player.addEventListener("play", () => {
     trackState.textContent = "Reproduciendo";
-    syncTrackColor();
+    syncTrackColor(true);
 });
 player.addEventListener("pause", () => {
-    if (!player.ended && lightingMap.length > 0) {
+    if (!player.ended && songTimeline.length > 0) {
         trackState.textContent = "Pista en pausa";
     }
 });
 player.addEventListener("ended", () => {
     trackState.textContent = "Pista terminada";
-    activeTrackCueIndex = -1;
+    activeTimelineIndex = -1;
+    appliedTimelineSignature = "";
 });
-player.addEventListener("seeking", () => {
-    activeTrackCueIndex = -1;
+player.addEventListener("seeked", () => {
+    activeTimelineIndex = -1;
+    appliedTimelineSignature = "";
+    syncTrackColor(true);
 });
-player.addEventListener("timeupdate", syncTrackColor);
+player.addEventListener("timeupdate", () => syncTrackColor());
 
 window.addEventListener("beforeunload", () => {
     allowReconnect = false;
@@ -460,6 +561,11 @@ window.addEventListener("beforeunload", () => {
     colorSocket?.close();
 });
 
-refreshStatus();
-connectColorStream();
-window.setInterval(() => refreshStatus({ quiet: true }), 5000);
+async function initialize() {
+    connectColorStream();
+    await loadApplicationData();
+    await refreshStatus();
+    window.setInterval(() => refreshStatus({ quiet: true }), 5000);
+}
+
+void initialize();

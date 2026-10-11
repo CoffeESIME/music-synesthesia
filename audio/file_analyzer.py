@@ -24,21 +24,10 @@ HOP_LENGTH: int = 512
 CUE_INTERVAL_SECONDS: float = 0.25
 
 
-def _rgb_to_hex(rgb: list[int]) -> str:
-    """Convierte una lista RGB validada a hexadecimal."""
-    if len(rgb) != 3 or any(channel < 0 or channel > 255 for channel in rgb):
-        raise ValueError("Cada color del perfil debe contener tres canales de 0 a 255")
-    return "#{:02X}{:02X}{:02X}".format(*rgb)
-
-
 def analyze_audio_file(
     filepath: str,
-    profile: dict[str, list[int]],
 ) -> list[dict[str, float | str]]:
-    """Genera cues temporales de nota y color para una pista WAV o MP3."""
-    if not profile:
-        raise ValueError("El perfil sinestesico no puede estar vacio")
-
+    """Extrae una linea de tiempo de notas de una pista WAV o MP3."""
     audio, sample_rate = librosa.load(filepath, sr=SAMPLE_RATE, mono=True)
     if audio.size == 0:
         raise ValueError("El archivo de audio no contiene muestras")
@@ -52,7 +41,7 @@ def analyze_audio_file(
         1,
         round(CUE_INTERVAL_SECONDS * sample_rate / HOP_LENGTH),
     )
-    lighting_map: list[dict[str, float | str]] = []
+    timeline: list[dict[str, float | str]] = []
     previous_note: str | None = None
 
     for start_frame in range(0, chromagram.shape[1], frames_per_cue):
@@ -66,23 +55,19 @@ def analyze_audio_file(
         note: str = NOTE_NAMES[int(np.argmax(mean_chroma))]
         if note == previous_note:
             continue
-        if note not in profile:
-            raise ValueError(f"El perfil no contiene un color para la nota {note}")
-
-        time_sec: float = float(
+        time_seconds: float = float(
             librosa.frames_to_time(
                 start_frame,
                 sr=sample_rate,
                 hop_length=HOP_LENGTH,
             )
         )
-        lighting_map.append(
+        timeline.append(
             {
-                "time_sec": round(time_sec, 3),
-                "color_hex": _rgb_to_hex(profile[note]),
+                "time": round(time_seconds, 3),
                 "note": note,
             }
         )
         previous_note = note
 
-    return lighting_map
+    return timeline
