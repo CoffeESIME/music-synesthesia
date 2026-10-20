@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,7 +33,11 @@ from hardware.hue_client import HueController
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 STATIC_DIR: Path = PROJECT_ROOT / "static"
-TEMP_DIR: Path = PROJECT_ROOT / "temp"
+TEMP_DIR: Path = (
+    Path(tempfile.gettempdir()) / "sinestesia"
+    if os.getenv("VERCEL") == "1"
+    else PROJECT_ROOT / "temp"
+)
 MAX_AUDIO_BYTES: int = 250 * 1024 * 1024
 ALLOWED_AUDIO_SUFFIXES: frozenset[str] = frozenset({".wav", ".mp3"})
 
