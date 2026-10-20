@@ -10,6 +10,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 
 WORKDIR /build
 
+ARG REQUIREMENTS_FILE=requirements.txt
+
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         build-essential \
@@ -17,12 +19,12 @@ RUN apt-get update \
         portaudio19-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./
+COPY requirements.txt requirements-hardware.txt ./
 
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/python -m pip install --upgrade "pip<25" "setuptools<70" wheel \
     && /opt/venv/bin/python -m pip install numpy==1.26.4 \
-    && /opt/venv/bin/python -m pip install --no-build-isolation -r requirements.txt
+    && /opt/venv/bin/python -m pip install --no-build-isolation -r "${REQUIREMENTS_FILE}"
 
 
 FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime

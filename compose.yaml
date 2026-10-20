@@ -8,10 +8,14 @@ services:
     image: proyecto-sinestesia:local
     init: true
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       APP_PORT: "8765"
+      HUE_ENABLED: "${HUE_ENABLED:-false}"
+      BRIDGE_IP: "${BRIDGE_IP:-}"
+      HUE_APPLICATION_KEY: "${HUE_APPLICATION_KEY:-}"
+      HUE_LIGHT_IDS: "${HUE_LIGHT_IDS:-}"
+      FOCO_2: "${FOCO_2:-}"
+      FOCO_3: "${FOCO_3:-}"
       SINESTESIA_HTTPS_PORT: "${SINESTESIA_HTTPS_PORT:-18744}"
     volumes:
       - ./certificates:/app/static/certificates:ro

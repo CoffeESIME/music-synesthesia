@@ -70,6 +70,7 @@ document.addEventListener("fullscreenchange", () => {
 let sinestesiaProfiles = {};
 let songTimeline = [];
 let lightIds = [];
+let hueEnabled = false;
 let activeTimelineIndex = -1;
 let appliedTimelineSignature = "";
 let pendingLightColor = null;
@@ -205,26 +206,32 @@ async function apiRequest(path, options = {}) {
 
 async function loadApplicationData() {
     setBusy(true);
-    setFeedback("Cargando perfiles históricos y luces…");
+    setFeedback("Cargando perfiles históricos…");
     try {
-        const [profiles, lightsResponse] = await Promise.all([
+        const [profiles, lightsResponse, config] = await Promise.all([
             apiRequest("/api/profiles"),
             apiRequest("/api/lights"),
+            apiRequest("/api/client-config"),
         ]);
         if (typeof profiles !== "object" || profiles === null || Object.keys(profiles).length === 0) {
             throw new Error("El servidor no devolvió perfiles sinestésicos.");
         }
-        if (!Array.isArray(lightsResponse.light_ids) || lightsResponse.light_ids.length === 0) {
+        hueEnabled = config.hue_enabled === true;
+        if (!Array.isArray(lightsResponse.light_ids)) {
+            throw new Error("La configuración de luces no es válida.");
+        }
+        if (hueEnabled && lightsResponse.light_ids.length === 0) {
             throw new Error("No hay focos Hue configurados.");
         }
 
         sinestesiaProfiles = profiles;
-        lightIds = lightsResponse.light_ids.filter((lightId) => typeof lightId === "string");
+        lightIds = hueEnabled ? lightsResponse.light_ids.filter((lightId) => typeof lightId === "string") : [];
         [...profileSelect.options].forEach((option) => {
             option.disabled = !sinestesiaProfiles[option.value];
         });
         profilesReady = true;
-        setFeedback(`${Object.keys(sinestesiaProfiles).length} perfiles listos para usar.`);
+        updateSocketState(hueEnabled ? "Conectando" : "Modo web · sin luces", hueEnabled ? "idle" : "online");
+        setFeedback(`${Object.keys(sinestesiaProfiles).length} perfiles listos para usar${hueEnabled ? " con Hue" : " en este dispositivo"}.`);
     } catch (error) {
         profilesReady = false;
         setFeedback(`No pudimos cargar la configuración. ${error.message}`, "error");
@@ -234,6 +241,7 @@ async function loadApplicationData() {
 }
 
 async function refreshStatus({ quiet = false } = {}) {
+    if (!hueEnabled) return;
     try {
         const status = await apiRequest("/api/status");
         applyEngineStatus(status);
@@ -295,9 +303,9 @@ async function changeProfile() {
     setFeedback(`Aplicando el perfil ${capitalize(nextProfile)}…`);
 
     try {
-        const response = await apiRequest(`/api/profile/${encodeURIComponent(nextProfile)}`, {
+        const response = hueEnabled ? await apiRequest(`/api/profile/${encodeURIComponent(nextProfile)}`, {
             method: "POST",
-        });
+        }) : { profile: nextProfile };
         profileSelect.value = response.profile;
         activeProfileLabel.textContent = capitalize(response.profile);
         activeProfileLabel.dataset.profile = response.profile;
@@ -444,6 +452,7 @@ function rgbToHex(rgb) {
 }
 
 function queueLightColor(rgb) {
+    if (!hueEnabled) return;
     pendingLightColor = [...rgb];
     if (!sendingLightColor) {
         void drainLightColorQueue();
@@ -665,10 +674,12 @@ window.addEventListener("beforeunload", () => {
 
 async function initialize() {
     void configureMicrophoneAccess();
-    connectColorStream();
     await loadApplicationData();
-    await refreshStatus();
-    window.setInterval(() => refreshStatus({ quiet: true }), 5000);
+    if (hueEnabled && profilesReady) {
+        connectColorStream();
+        await refreshStatus();
+        window.setInterval(() => refreshStatus({ quiet: true }), 5000);
+    }
 }
 
 void initialize();

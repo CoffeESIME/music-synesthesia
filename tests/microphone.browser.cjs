@@ -5,6 +5,7 @@ const os = require('node:os');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const root = path.join(__dirname, '..');
+const hueEnabled = process.env.TEST_HUE_ENABLED !== 'false';
 const code = fs.readFileSync(path.join(root, 'static/microphone.js'), 'utf8');
 const detector = vm.runInNewContext(code + '\ndetectMicrophoneNote');
 const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
@@ -38,24 +39,27 @@ fs.writeFileSync(fixture, wav);
         const errors = [];
         let lightCalls = 0;
         let serverStarts = 0;
+        let socketCalls = 0;
+        let sharedStateCalls = 0;
         let activeProfile = 'scriabin';
         page.on('pageerror', error => errors.push(error.message));
-        await page.routeWebSocket('**/ws/color_stream', () => {});
-        await page.route('**/*', route => {
+        await page.routeWebSocket('**/ws/color_stream', () => { socketCalls++; });
+        const routeApp = route => {
             const url = new URL(route.request().url());
             if (url.pathname === '/api/listener/start') serverStarts++;
             if (url.pathname === '/api/set_light') lightCalls++;
+            if (url.pathname === '/api/status' || url.pathname.startsWith('/api/profile/')) sharedStateCalls++;
             if (url.pathname === '/api/profile/newton') activeProfile = 'newton';
             const data = {
                 '/api/profiles': {
                     scriabin: Object.fromEntries(names.map(note => [note, [0,255,0]])),
                     newton: Object.fromEntries(names.map(note => [note, [255,127,0]])),
                 },
-                '/api/lights': { light_ids: ['fake-light'] },
+                '/api/lights': { light_ids: hueEnabled ? ['fake-light'] : [] },
                 '/api/status': { running: false, profile: activeProfile, last_error: 'Invalid input device' },
                 '/api/profile/newton': { profile: activeProfile },
                 '/api/set_light': {},
-                '/api/client-config': { https_port: 18744 },
+                '/api/client-config': { https_port: 18744, hue_enabled: hueEnabled },
                 '/api/upload': { audio_url: '/temp/tone.wav', timeline: [{ time: 0, note: 'A' }] },
             };
             if (data[url.pathname]) return route.fulfill({ json: data[url.pathname] });
@@ -63,12 +67,13 @@ fs.writeFileSync(fixture, wav);
             const filename = path.join(root, url.pathname === '/' ? 'static/index.html' : url.pathname);
             if (!fs.existsSync(filename)) return route.fulfill({ status: 404 });
             return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html' });
-        });
+        };
+        await page.route('**/*', routeApp);
         await page.goto('https://microphone.test/');
         await page.locator('#start-button').click();
         await page.waitForFunction(() => browserMicrophone.running && lastMicrophoneNote === 'A');
         assert.equal(serverStarts, 0);
-        assert.ok(lightCalls > 0);
+        assert.equal(lightCalls > 0, hueEnabled);
         assert.ok(!(await page.locator('#feedback').textContent()).includes('Invalid input device'));
         await page.locator('#profile-select').selectOption('newton');
         await page.waitForFunction(() => document.querySelector('#color-hex').textContent === '#FF7F00');
@@ -86,6 +91,25 @@ fs.writeFileSync(fixture, wav);
         await page.evaluate(async () => { player.currentTime = 0; await player.play(); });
         await page.waitForFunction(() => !browserMicrophone.running);
         await page.evaluate(() => player.pause());
+        if (!hueEnabled) {
+            // A second visitor changing profiles must not affect this session.
+            const other = await browser.newPage();
+            await other.route('**/*', routeApp);
+            await other.routeWebSocket('**/ws/color_stream', () => { socketCalls++; });
+            await other.goto('https://microphone.test/');
+            await other.waitForFunction(() => profilesReady);
+            await other.locator('#profile-select').selectOption('newton');
+            await other.locator('#profile-select').selectOption('scriabin');
+            await other.locator('#start-button').click();
+            await other.waitForFunction(() => lastMicrophoneNote === 'A');
+            assert.equal(await other.locator('#color-hex').textContent(), '#00FF00');
+            await page.waitForTimeout(5200);
+            assert.equal(await page.locator('#profile-select').inputValue(), 'newton');
+            await other.close();
+            assert.equal(lightCalls, 0);
+            assert.equal(socketCalls, 0);
+            assert.equal(sharedStateCalls, 0);
+        }
 
         await page.evaluate(() => {
             window.originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -114,7 +138,7 @@ fs.writeFileSync(fixture, wav);
         await page.waitForFunction(() => document.querySelector('#feedback').textContent.includes('requiere HTTPS'));
         assert.equal(await page.locator('#microphone-secure-link').getAttribute('href'), 'https://192.0.2.55:18744/');
         assert.deepEqual(errors, []);
-        console.log('PASS: 96 tonal signals, silence/DC rejection, browser mic, Hue queue, profile, stop, track playback, denied permission, canceled permission, LAN HTTPS guidance; no server capture.');
+        console.log(`PASS (${hueEnabled ? 'Hue' : 'web'}): 96 tonal signals, silence/DC rejection, browser mic, profile, stop, track playback, denied/canceled permissions, LAN HTTPS; no server capture. Light commands: ${lightCalls}.`);
     } finally {
         await browser.close();
         fs.unlinkSync(fixture);

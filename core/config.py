@@ -1,4 +1,4 @@
-"""Configuracion de entorno para la conexion con Philips Hue."""
+"""Configuracion de la app web y la integracion local opcional con Hue."""
 
 import os
 
@@ -6,6 +6,16 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+
+
+def _load_bool(name: str, default: str = "false") -> bool:
+    value = os.getenv(name, default).strip().lower()
+    if value not in {"true", "false", "1", "0"}:
+        raise ValueError(f"{name} debe ser true, false, 1 o 0")
+    return value in {"true", "1"}
+
+
+HUE_ENABLED: bool = _load_bool("HUE_ENABLED")
 
 BRIDGE_IP: str = os.getenv("BRIDGE_IP", "").strip()
 HUE_APPLICATION_KEY: str = os.getenv("HUE_APPLICATION_KEY", "").strip()

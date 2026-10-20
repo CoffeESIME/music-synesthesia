@@ -1,5 +1,8 @@
 services:
   app:
+    build:
+      args:
+        REQUIREMENTS_FILE: requirements-hardware.txt
     devices:
       - /dev/snd:/dev/snd
     group_add:

@@ -1,13 +1,13 @@
 # Proyecto Sinestesia en Docker
 
-La imagen usa Python 3.11 sobre Debian Bookworm. PortAudio, libsndfile y la
-compilacion de aubio quedan resueltos dentro de Linux, sin depender del Python
-instalado en Windows. FFmpeg queda disponible para analizar pistas MP3.
+La imagen usa Python 3.11 sobre Debian Bookworm. El modo predeterminado es web,
+sin puente ni luces Hue y sin dependencias de captura de audio nativo.
+FFmpeg queda disponible para analizar pistas MP3.
 
 ## Arranque habitual
 
-1. Configura `.env` con `BRIDGE_IP`, `HUE_APPLICATION_KEY` y
-   `HUE_LIGHT_IDS`. Los IDs se separan con comas.
+1. Puedes arrancar sin archivo `.env`. Si necesitas ajustar puertos, copia
+   `.env.example` a `.env` y deja `HUE_ENABLED=false`.
 2. Construye y levanta el servicio:
 
    ```powershell
@@ -29,6 +29,46 @@ Para detenerlo:
 ```powershell
 docker-compose down
 ```
+
+## Instalación local con Hue
+
+En `.env`, configura `BRIDGE_IP`, `HUE_APPLICATION_KEY` y `HUE_LIGHT_IDS`
+(IDs separados por comas). Activa la integración con el archivo adicional:
+
+```powershell
+docker-compose -f compose.yaml -f compose.hue.yaml up --build -d
+```
+
+También puedes usar solamente `compose.yaml` con `HUE_ENABLED=true` en `.env`.
+Al activar Hue se validan las credenciales y la lista de luces al arrancar.
+El navegador de cada participante controla las mismas luces del servidor.
+Para volver al modo web, deja `HUE_ENABLED=false` y ejecuta el arranque habitual.
+Las credenciales existentes se ignoran mientras Hue esté desactivado.
+
+## Compartir la idea por Internet
+
+Despliega la imagen en un servidor que ejecute contenedores y publica el puerto
+interno `8765` detrás de un dominio con HTTPS y certificado público válido.
+Configura `HUE_ENABLED=false`. El servicio `https` incluido en Compose es para
+la red local; para Internet utiliza el HTTPS de tu alojamiento o proxy.
+
+Las personas abren la misma URL desde su navegador o teléfono, sin instalar la
+app ni tener Hue. Cada sesión mantiene su propio perfil, micrófono y visualización;
+en modo web no se envían comandos de luces ni se abre el stream de colores compartido.
+El micrófono se analiza en el dispositivo. Los archivos WAV/MP3 se suben al servidor
+para su análisis y necesitan espacio temporal. Sigue siendo una app con backend
+Python, por lo que requiere un alojamiento que ejecute ese backend.
+
+Para ejecutar sin Docker (Python 3.11):
+
+```powershell
+python -m pip install -r requirements.txt
+$env:HUE_ENABLED = "false"
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8765
+```
+
+El punto de entrada de esta app es `api.main:app`. `main.py` corresponde al
+prototipo anterior de imágenes. Para MP3 sin Docker, instala también FFmpeg.
 
 ## Cambiar el puerto publicado
 
@@ -106,7 +146,7 @@ La API de escucha del servidor se conserva para instalaciones Linux con ALSA.
 Ese modo requiere un dispositivo de sonido dentro del contenedor:
 
 ```bash
-docker-compose -f compose.yaml -f compose.audio-linux.yaml up --build -d
+docker-compose -f compose.yaml -f compose.hue.yaml -f compose.audio-linux.yaml up --build -d
 ```
 
 Docker Desktop en Windows no expone el micrófono como `/dev/snd` en esta

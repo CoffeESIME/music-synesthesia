@@ -1,0 +1,6 @@
+# Integracion opcional para el servidor que tiene acceso al puente Hue.
+# docker compose -f compose.yaml -f compose.hue.yaml up --build -d
+services:
+  app:
+    environment:
+      HUE_ENABLED: "true"

@@ -54,7 +54,7 @@ class SynesthesiaEngine:
     def __init__(
         self,
         listener: AudioSource,
-        hue_controller: LightAdapter,
+        hue_controller: LightAdapter | None,
         light_ids: Sequence[str],
         profile_name: str = "scriabin",
         transition_ms: int = 100,
@@ -62,14 +62,14 @@ class SynesthesiaEngine:
         normalized_ids: tuple[str, ...] = tuple(
             light_id.strip() for light_id in light_ids if light_id.strip()
         )
-        if not normalized_ids:
-            raise ValueError("Debe proporcionarse al menos un light_id")
+        if normalized_ids and hue_controller is None:
+            raise ValueError("Las luces requieren un adaptador configurado")
         if transition_ms < 0:
             raise ValueError("transition_ms no puede ser negativo")
 
         normalized_profile: str = self._normalize_profile(profile_name)
         self._listener: AudioSource = listener
-        self._hue_controller: LightAdapter = hue_controller
+        self._hue_controller: LightAdapter | None = hue_controller
         self._light_ids: tuple[str, ...] = normalized_ids
         self._transition_ms: int = transition_ms
         self._profile_name: str = normalized_profile
@@ -136,6 +136,7 @@ class SynesthesiaEngine:
 
         for light_id in self._light_ids:
             try:
+                assert self._hue_controller is not None
                 self._hue_controller.set_color(
                     light_id,
                     rgb,
@@ -215,6 +216,7 @@ class SynesthesiaEngine:
 
                 for light_id in self._light_ids:
                     try:
+                        assert self._hue_controller is not None
                         self._hue_controller.set_color(
                             light_id,
                             rgb,

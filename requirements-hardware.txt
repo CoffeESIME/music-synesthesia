@@ -1,0 +1,4 @@
+# Solo para capturar el microfono fisico del servidor; Hue no lo requiere.
+-r requirements.txt
+pyaudio==0.2.14
+aubio==0.4.9

@@ -23,7 +23,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from core.config import HUE_LIGHT_IDS
+from audio.server_listener import ServerAudioListener
+from core.config import HUE_ENABLED, HUE_LIGHT_IDS
 from core.synesthesia import ALL_PROFILES
 from engine.synesthesia_engine import ColorEvent, SynesthesiaEngine
 from hardware.hue_client import HueController
@@ -134,19 +135,16 @@ def _engine_status(engine: SynesthesiaEngine) -> EngineStatus:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Crea los adaptadores al arrancar y libera el microfono al cerrar."""
-    if not HUE_LIGHT_IDS:
+    if HUE_ENABLED and not HUE_LIGHT_IDS:
         raise RuntimeError("Configura HUE_LIGHT_IDS en .env con al menos una luz")
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Imports diferidos: importar la API no abre ni requiere el dispositivo de audio.
-    from audio.pitch_detector import AudioListener
-
-    listener = AudioListener()
-    hue_controller = HueController()
+    listener = ServerAudioListener()
+    hue_controller = HueController() if HUE_ENABLED else None
     engine = SynesthesiaEngine(
         listener=listener,
         hue_controller=hue_controller,
-        light_ids=HUE_LIGHT_IDS,
+        light_ids=HUE_LIGHT_IDS if HUE_ENABLED else (),
         profile_name="scriabin",
         transition_ms=100,
     )
@@ -179,14 +177,22 @@ async def get_status(request: Request) -> EngineStatus:
 
 
 @app.get("/api/client-config")
-async def get_client_config() -> dict[str, int]:
-    """Puerto HTTPS público para solicitar el micrófono del navegador en LAN."""
-    return {"https_port": int(os.getenv("SINESTESIA_HTTPS_PORT", "18744"))}
+async def get_client_config() -> dict[str, int | bool]:
+    """Capacidades publicas, sin credenciales del puente Hue."""
+    return {
+        "https_port": int(os.getenv("SINESTESIA_HTTPS_PORT", "18744")),
+        "hue_enabled": HUE_ENABLED,
+    }
 
 
 @app.post("/api/listener/start", response_model=EngineStatus)
 async def start_listener(request: Request) -> EngineStatus:
     """Inicia la captura en el hilo daemon sin bloquear FastAPI."""
+    if not HUE_ENABLED:
+        raise HTTPException(
+            status_code=409,
+            detail="El modo web usa el microfono del navegador de cada persona",
+        )
     engine: SynesthesiaEngine = _get_engine(cast(FastAPI, request.app))
     engine.start()
     return _engine_status(engine)
@@ -217,7 +223,7 @@ async def get_profiles() -> dict[str, dict[str, list[int]]]:
 @app.get("/api/lights", response_model=LightListResponse)
 async def get_lights() -> LightListResponse:
     """Expone los IDs configurados que puede actualizar el reproductor."""
-    return LightListResponse(light_ids=list(HUE_LIGHT_IDS))
+    return LightListResponse(light_ids=list(HUE_LIGHT_IDS) if HUE_ENABLED else [])
 
 
 @app.post("/api/profile/{name}", response_model=ProfileResponse)
@@ -237,6 +243,8 @@ async def set_light(
     request: Request,
 ) -> SetLightResponse:
     """Envia un RGB a una luz Hue fuera del Event Loop de FastAPI."""
+    if not HUE_ENABLED:
+        raise HTTPException(status_code=409, detail="Hue esta desactivado en modo web")
     light_id: str = command.light_id.strip()
     if light_id not in HUE_LIGHT_IDS:
         raise HTTPException(status_code=404, detail="La luz solicitada no esta configurada")
@@ -268,8 +276,6 @@ async def upload_audio(
     file: UploadFile = File(...),
 ) -> AudioUploadResponse:
     """Guarda una pista y extrae su timeline de notas una sola vez."""
-    from audio.file_analyzer import analyze_audio_file
-
     original_name: str = file.filename or ""
     suffix: str = Path(original_name).suffix.lower()
     if suffix not in ALLOWED_AUDIO_SUFFIXES:
@@ -278,6 +284,8 @@ async def upload_audio(
             status_code=415,
             detail="El archivo debe tener extension .wav o .mp3",
         )
+
+    from audio.file_analyzer import analyze_audio_file
 
     stored_name: str = f"{uuid4().hex}{suffix}"
     destination: Path = TEMP_DIR / stored_name

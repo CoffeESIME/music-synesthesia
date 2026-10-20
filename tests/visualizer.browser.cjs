@@ -19,6 +19,7 @@ fs.mkdirSync(outputDir, { recursive: true });
         const data = {
             '/api/profiles': { scriabin: profile, newton: Object.fromEntries(notes.map(note => [note, [255,127,0]])) },
             '/api/lights': { light_ids: ['test'] },
+            '/api/client-config': { https_port: 18744, hue_enabled: true },
             '/api/status': { running: false, profile: 'scriabin' },
             '/api/profile/newton': { profile: 'newton' },
             '/api/set_light': {},

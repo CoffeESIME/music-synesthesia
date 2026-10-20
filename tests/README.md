@@ -9,7 +9,23 @@ Requiere Node.js, Chrome y Playwright disponible como paquete (o la variable
 ```powershell
 node tests/visualizer.browser.cjs
 node tests/microphone.browser.cjs
+$env:TEST_HUE_ENABLED = "false"
+node tests/microphone.browser.cjs
+Remove-Item Env:TEST_HUE_ENABLED
 ```
+
+La variante web verifica que no se envían comandos Hue, no se conecta al stream
+compartido y dos visitantes pueden usar perfiles distintos sin interferencia.
+
+Las pruebas de integración de la API requieren `httpx` en el entorno de pruebas:
+
+```powershell
+python -m pip install httpx
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+Comprueban arranque sin luces ni dependencias nativas, bloqueo de hardware en
+modo web y comandos/validación de configuración en modo Hue con adaptadores simulados.
 
 Las capturas se guardan en el directorio temporal `hue-visualizer-check` o en
 `VISUALIZER_OUTPUT_DIR` si se define. Verifica las 12 formas, la señal WebSocket,
