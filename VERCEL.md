@@ -3,7 +3,10 @@
 El proyecto usa el preset **FastAPI**, con la raíz del repositorio como Root
 Directory. `pyproject.toml` configura `api.main:app` como punto de entrada;
 `main.py` es el prototipo anterior de imágenes y no debe usarse para este deploy.
-Las dependencias se instalan desde `requirements.txt`.
+Vercel instala las dependencias declaradas en `[project.dependencies]` de
+`pyproject.toml` mediante `uv`. Mantén esa lista sincronizada con
+`requirements.txt`, usado por Docker y la instalación con pip. El rango de
+Python es 3.11–3.12, compatible con NumPy 1.26.4; Vercel debe usar Python 3.12.
 
 En las variables de entorno de Vercel configura `HUE_ENABLED=false`. El modo web
 usa el micrófono del navegador y no necesita credenciales ni dispositivos Hue.

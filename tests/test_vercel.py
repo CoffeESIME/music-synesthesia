@@ -4,10 +4,24 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 import unittest
 
 
 class VercelStartupTests(unittest.TestCase):
+    def test_project_metadata_and_runtime_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        project = config["project"]
+        self.assertEqual(project["name"], "music-synesthesia")
+        self.assertTrue(project["version"])
+        self.assertEqual(project["requires-python"], ">=3.11,<3.13")
+        requirements = {
+            line.strip() for line in (root / "requirements.txt").read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        self.assertEqual(set(project["dependencies"]), requirements)
+
     def test_configured_entrypoint_starts_with_temporary_storage(self):
         script = '''
 import importlib
